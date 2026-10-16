@@ -1,0 +1,10 @@
+# KITTI-360 download links used by the data-prep notebook.
+# The data is licensed CC BY-NC-SA 3.0 (non-commercial). Register at cvlibs.net and accept the KITTI-360 terms
+# before downloading. This repository never contains the data itself.
+
+# raw Velodyne scans, one zip per sequence
+velodyne:
+  2013_05_28_drive_0000_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync_velodyne.zip
+
+# Velodyne timestamps for all sequences
+velodyne_timestamps: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/data_timestamps_velodyne.zip
