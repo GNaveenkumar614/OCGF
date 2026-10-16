@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocgf"
+version = "0.0.1"
+description = "Confidence-guided, object-aware drivable-area estimation from LiDAR-camera fusion (research code)"
+readme = "README.md"
+requires-python = ">=3.10"
+# numpy-only core: datasets, geometry and metrics run without torch
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pyyaml>=6", "pillow>=9"]
+
+[project.optional-dependencies]
+torch = ["torch>=2.2", "torchvision>=0.17"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["ocgf*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

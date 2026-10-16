@@ -1,0 +1,35 @@
+# Papers and internal planning documents: copyrighted or team-internal, never published
+knowledgebase/
+CLAUDE.md
+
+# Datasets and anything derived from them (KITTI / KITTI-360 are CC BY-NC-SA 3.0; never redistributed)
+data/
+*.zip
+*.bin
+*.npz
+*.npy
+*.pkl
+
+# Official dataset download scripts: their URLs must stay out of this repo
+download_*.sh
+
+# Training and teacher outputs
+output/
+outputs/
+checkpoints/
+runs/
+*.pt
+*.pth
+
+# Secrets
+.env
+kaggle.json
+
+# Python / Jupyter
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
