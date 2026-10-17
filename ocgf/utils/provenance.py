@@ -12,7 +12,6 @@ import numpy as np
 
 import ocgf
 
-
 def git_commit(repo=None) -> dict:
     """{'commit': sha or None, 'dirty': bool or None} of the git checkout at repo (default: this package's repo)."""
     repo = Path(repo) if repo else Path(ocgf.__file__).resolve().parents[1]
