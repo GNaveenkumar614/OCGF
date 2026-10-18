@@ -2,9 +2,37 @@
 # The data is licensed CC BY-NC-SA 3.0 (non-commercial). Register at cvlibs.net and accept the KITTI-360 terms
 # before downloading. This repository never contains the data itself.
 
-# raw Velodyne scans, one zip per sequence
+# Paper split kitti360_paper_v1 (configs/splits/, decided 2026-10-18):
+#   train 0000, 0002, 0004, 0005 · val 0006 · test 0009, 0010 · unused 0003, 0007 (links kept for completeness).
+# Drive 0000 takes its images from the Kaggle starter and keeps every frame; the other drives take them from the
+# image_00 zips below and keep one usable frame every 2.5 m, read remotely, so only about a quarter of a zip is fetched.
+
+# raw Velodyne scans, one zip per sequence (the nine training drives)
 velodyne:
   2013_05_28_drive_0000_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0000_sync_velodyne.zip
+  2013_05_28_drive_0002_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0002_sync_velodyne.zip
+  2013_05_28_drive_0003_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0003_sync_velodyne.zip
+  2013_05_28_drive_0004_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0004_sync_velodyne.zip
+  2013_05_28_drive_0005_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0005_sync_velodyne.zip
+  2013_05_28_drive_0006_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0006_sync_velodyne.zip
+  2013_05_28_drive_0007_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0007_sync_velodyne.zip
+  2013_05_28_drive_0009_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0009_sync_velodyne.zip
+  2013_05_28_drive_0010_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/2013_05_28_drive_0010_sync_velodyne.zip
 
 # Velodyne timestamps for all sequences
 velodyne_timestamps: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_3d_raw/data_timestamps_velodyne.zip
+
+# rectified left perspective camera (image_00, 1408 x 376), one zip per sequence; the semantics refer to these images
+images_00:
+  2013_05_28_drive_0000_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0000_sync_image_00.zip
+  2013_05_28_drive_0002_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0002_sync_image_00.zip
+  2013_05_28_drive_0003_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0003_sync_image_00.zip
+  2013_05_28_drive_0004_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0004_sync_image_00.zip
+  2013_05_28_drive_0005_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0005_sync_image_00.zip
+  2013_05_28_drive_0006_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0006_sync_image_00.zip
+  2013_05_28_drive_0007_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0007_sync_image_00.zip
+  2013_05_28_drive_0009_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0009_sync_image_00.zip
+  2013_05_28_drive_0010_sync: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/2013_05_28_drive_0010_sync_image_00.zip
+
+# image timestamps for all sequences
+image_timestamps: https://s3.eu-central-1.amazonaws.com/avg-projects/KITTI-360/data_2d_raw/data_timestamps_perspective.zip

@@ -33,3 +33,5 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 venv/
+scan_stats.csv
+2013_05_28_drive_0000_sync.csv

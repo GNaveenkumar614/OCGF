@@ -47,8 +47,31 @@ def discover_kitti360(root, sequence: str) -> dict[str, Path]:
     return found
 
 
-def missing_required(found: dict) -> list[str]:
-    return [c for c in REQUIRED if c not in found]
+def missing_required(found: dict, required=REQUIRED) -> list[str]:
+    return [c for c in required if c not in found]
+
+
+_MARKERS = {"perspective.txt", "calib_cam_to_velo.txt", "calib_cam_to_pose.txt", "poses.txt", "cam0_to_world.txt",
+            "timestamps.txt", "data_2d_semantics.zip"}
+
+
+def describe_tree(root, max_depth: int = 9, max_lines: int = 250) -> list[str]:
+    """Folder tree under root with file counts, plus the files discovery looks for. For 'not found' messages."""
+    root = str(root)
+    lines = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        depth = dirpath[len(root):].count(os.sep)
+        dirnames.sort()
+        names = set(filenames)
+        marks = sorted(_MARKERS & names) + sorted(f for f in filenames if f.endswith(".xml"))[:5]
+        lines.append("  " * depth + (os.path.basename(dirpath) or dirpath) + "/"
+                     + (f"  ({len(filenames)} files)" if filenames else "") + (f"  <- {', '.join(marks)}" if marks else ""))
+        if depth >= max_depth:
+            dirnames[:] = []
+        if len(lines) >= max_lines:
+            lines.append("  ... (truncated)")
+            break
+    return lines
 
 
 def write_dataset_map(path, sequence: str, components: dict) -> None:

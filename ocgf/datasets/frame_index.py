@@ -1,7 +1,15 @@
 """Per-frame index of one KITTI-360 sequence: which data each frame has, timing, travel and usability.
 
-usable = image ∧ scan ∧ pose ∧ inside a semantic window ∧ ≥ min_future_m of future path ∧ image/scan aligned.
-sample_5m marks usable frames picked every step_m metres of travel (teacher and training frames).
+usable = image ∧ scan ∧ pose ∧ ≥ min_future_m of future path ∧ image/scan aligned
+         ∧ inside a semantic window, for val/test drives only (require_window).
+kept   = frames whose scan and image are stored. Drive 0000 keeps every frame; the paper's other drives keep one usable
+         frame every 2.5 m of travel (keep_every_m=2.5, decided 2026-10-18; revisit after the first training runs).
+sample_5m marks kept, usable frames picked every step_m metres (teacher, training and evaluation frames).
+
+Why the window rule depends on the role (decided 2026-10-18): the accumulated 3D semantics, our evaluation ground
+truth, exist only inside semantic windows, so val/test frames must lie in one. Training never uses that ground truth,
+so train drives keep frames outside the windows too (e.g. about 3k more frames of drive 0002). Drive 0000 was
+prepared before this rule, with the window required; recompute its usable flag from the CSV if it trains without it.
 """
 from __future__ import annotations
 
@@ -11,11 +19,11 @@ from pathlib import Path
 
 import numpy as np
 
-BOOL_COLUMNS = ("has_image", "has_scan", "has_pose", "has_sem2d", "aligned", "usable", "sample_5m")
+BOOL_COLUMNS = ("has_image", "has_scan", "has_pose", "has_sem2d", "aligned", "usable", "sample_5m", "kept")
 INT_COLUMNS = ("frame", "window_start", "window_end", "n_points_raw", "n_points_crop")
 COLUMNS = ("frame", "has_image", "has_scan", "has_pose", "has_sem2d", "window_start", "window_end",
            "t_image", "t_scan", "dt_ms", "aligned", "odometer_m", "future_path_m", "x_world", "y_world",
-           "n_points_raw", "n_points_crop", "usable", "sample_5m")
+           "n_points_raw", "n_points_crop", "usable", "sample_5m", "kept")    # drive 0000's first CSV has no 'kept'
 
 
 def parse_timestamps(lines) -> np.ndarray:
@@ -93,10 +101,13 @@ def _by_frame(values, n: int) -> np.ndarray:
 
 def build_frame_index(*, image_frames, scan_frames, image_times, scan_times, pose_frames, T_world_lidar,
                       windows, sem2d_frames=(), scan_stats=None, min_future_m: float = 50.0,
-                      step_m: float = 5.0, max_dt_ms: float = 20.0) -> dict[str, np.ndarray]:
+                      step_m: float = 5.0, max_dt_ms: float = 20.0, require_window: bool = True,
+                      keep_every_m: float | None = None) -> dict[str, np.ndarray]:
     """One row per frame from 0 to the last frame seen in any source. Times are indexed by frame (line i = frame i).
 
-    scan_stats: optional {'frame', 'n_raw', 'n_crop'} arrays from the scan pass.
+    scan_stats: optional {'frame', 'n_raw', 'n_crop'} arrays from the scan pass (n_points stay -1 for other frames).
+    require_window: usable frames must lie in a semantic window (val/test/dev drives; False for train drives).
+    keep_every_m: keep one usable frame every this many metres; None keeps every frame that has a scan.
     """
     image_frames, scan_frames, pose_frames = (np.asarray(a, dtype=np.int64) for a in (image_frames, scan_frames, pose_frames))
     n = 1 + max(int(a.max()) if len(a) else -1 for a in (image_frames, scan_frames, pose_frames))
@@ -128,8 +139,10 @@ def build_frame_index(*, image_frames, scan_frames, image_times, scan_times, pos
         n_raw[f], n_crop[f] = scan_stats["n_raw"], scan_stats["n_crop"]
 
     has_image, has_scan, has_pose = np.isin(frame, image_frames), np.isin(frame, scan_frames), np.isin(frame, pose_frames)
+    in_window = window >= 0 if require_window else np.ones(n, dtype=bool)
     with np.errstate(invalid="ignore"):
-        usable = has_image & has_scan & has_pose & (window >= 0) & (future >= min_future_m) & aligned
+        usable = has_image & has_scan & has_pose & in_window & (future >= min_future_m) & aligned
+    kept = sample_every(odometer, usable, keep_every_m) if keep_every_m else has_scan.copy()
     return {
         "frame": frame, "has_image": has_image, "has_scan": has_scan, "has_pose": has_pose,
         "has_sem2d": np.isin(frame, np.asarray(sem2d_frames, dtype=np.int64)),
@@ -137,19 +150,26 @@ def build_frame_index(*, image_frames, scan_frames, image_times, scan_times, pos
         "t_image": t_image, "t_scan": t_scan, "dt_ms": dt_ms, "aligned": aligned,
         "odometer_m": odometer, "future_path_m": future, "x_world": position[:, 0], "y_world": position[:, 1],
         "n_points_raw": n_raw, "n_points_crop": n_crop,
-        "usable": usable, "sample_5m": sample_every(odometer, usable, step_m),
+        "usable": usable, "sample_5m": sample_every(odometer, usable & kept, step_m), "kept": kept,
     }
+
+
+def attach_scan_stats(index: dict, scan_stats: dict) -> dict:
+    """Fill n_points_raw / n_points_crop from the scan pass (which runs after frame selection)."""
+    f = np.asarray(scan_stats["frame"], dtype=np.int64)
+    index["n_points_raw"][f], index["n_points_crop"][f] = scan_stats["n_raw"], scan_stats["n_crop"]
+    return index
 
 
 def write_csv(path, index: dict[str, np.ndarray]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    columns = [index[c] for c in COLUMNS]
+    names = [c for c in COLUMNS if c in index]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(COLUMNS)
-        for row in zip(*columns):
-            writer.writerow([_fmt(name, v) for name, v in zip(COLUMNS, row)])
+        writer.writerow(names)
+        for row in zip(*(index[c] for c in names)):
+            writer.writerow([_fmt(name, v) for name, v in zip(names, row)])
 
 
 def _fmt(name: str, value) -> str:

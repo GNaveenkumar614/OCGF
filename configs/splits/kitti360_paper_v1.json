@@ -1,0 +1,24 @@
+{
+ "name": "kitti360_paper_v1",
+ "decided": "2026-10-18",
+ "level": "drive",
+ "dataset": "kitti360",
+ "train": ["2013_05_28_drive_0000_sync", "2013_05_28_drive_0002_sync", "2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync"],
+ "val": ["2013_05_28_drive_0006_sync"],
+ "test": ["2013_05_28_drive_0009_sync", "2013_05_28_drive_0010_sync"],
+ "unused": ["2013_05_28_drive_0003_sync", "2013_05_28_drive_0007_sync"],
+ "frame_rules": {
+  "keep_every_m": "2.5 for every drive except 0000, which keeps all frames",
+  "usable": "image, scan, pose, aligned (gap <= 20 ms), >= 50 m of future path; val and test frames must also lie inside a semantic window (the evaluation ground truth exists only there), train frames need not",
+  "revisit_m": "50: val/test frames within 50 m (GPS) of any train frame are dropped (0006 passes 0004/0005 on 5-13 % of its route)",
+  "sample_m": "5: training, teacher and evaluation frames are kept usable frames every 5 m",
+  "frame_level_split": "written as a separate file once every drive's frame index exists"
+ },
+ "rationale": {
+  "test": "0009 + 0010: the richest hard cases (85 moving pedestrians, 54 cyclists, 1218 parked cars), in their own area with no overlap with any train drive",
+  "val": "0006: pedestrians and parked cars; its stretches near 0004/0005 are removed by the 50 m rule",
+  "train": "0000 + 0002 + 0004 + 0005: 38.4 km of residential and suburban driving for the self-supervised road training",
+  "unused": "0003 and 0007: fast roads with almost no near-obstacle cases; 0007 could serve later as an extra road-type test"
+ },
+ "evidence": "scripts/drive_stats.py (poses, OXTS and 3D boxes of all nine training drives); numbers in data/kitti360_meta/drive_stats.json"
+}

@@ -108,8 +108,11 @@ def write_report(path, sequence: str, index: dict, scan_stats: dict, profiles: d
     lines += ["## Frames", "", "| | frames |", "|---|---|"]
     for key, label in [("has_image", "image"), ("has_scan", "scan"), ("has_pose", "pose"), ("has_sem2d", "2D semantics"),
                        ("aligned", f"aligned (image/scan gap at most {settings['max_dt_ms']} ms)"), ("usable", "usable"),
+                       ("kept", f"kept (stored; every {settings.get('keep_every_m')} m)" if settings.get("keep_every_m")
+                        else "kept (stored; every frame)"),
                        ("sample_5m", f"sampled every {settings['step_m']} m")]:
-        lines.append(f"| {label} | {int(index[key].sum())} |")
+        if key in index:
+            lines.append(f"| {label} | {int(index[key].sum())} |")
     in_window = index["window_start"] >= 0
     lines.append(f"| inside a semantic window | {int(in_window.sum())} |")
     lines += ["", f"Frames 0-{n - 1}. Missing, among frames that have at least one source:", ""]

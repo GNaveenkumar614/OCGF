@@ -3,7 +3,8 @@
 Each frame is one member '{frame:010d}.npy' holding a structured array with fields x, y, z (int16 centimetres),
 intensity (uint8, 0..255 for 0..1) and ring (uint8): 8 bytes per point, at most 0.5 cm quantization error.
 Frames are grouped SHARD_SIZE to a shard, 'shard_{frame // SHARD_SIZE:03d}.zip' (stored, not compressed), which keeps
-Kaggle outputs to a few hundred files.
+Kaggle outputs to a few hundred files. The same shards also hold raw files by frame, e.g. the PNG images of drives whose
+images come from the official zips ('{frame:010d}.png').
 """
 from __future__ import annotations
 
@@ -53,8 +54,8 @@ def shard_name(frame: int) -> str:
     return f"shard_{frame // SHARD_SIZE:03d}.zip"
 
 
-def member_name(frame: int) -> str:
-    return f"{frame:010d}.npy"
+def member_name(frame: int, suffix: str = ".npy") -> str:
+    return f"{frame:010d}{suffix}"
 
 
 class ShardWriter:
@@ -68,18 +69,21 @@ class ShardWriter:
         self._members = set()
 
     def write(self, frame: int, rec: np.ndarray) -> None:
+        buf = io.BytesIO()
+        np.save(buf, np.asarray(rec, dtype=RECORD), allow_pickle=False)
+        self.write_bytes(frame, buf.getvalue(), ".npy")
+
+    def write_bytes(self, frame: int, data: bytes, suffix: str) -> None:
         name = shard_name(frame)
         if name != self._shard:
             self.close()
             self._zip = zipfile.ZipFile(self.directory / name, mode="a", compression=zipfile.ZIP_STORED)
             self._shard = name
             self._members = set(self._zip.namelist())
-        member = member_name(frame)
+        member = member_name(frame, suffix)
         if member in self._members:
-            raise ValueError(f"frame {frame} is already in {name}")
-        buf = io.BytesIO()
-        np.save(buf, np.asarray(rec, dtype=RECORD), allow_pickle=False)
-        self._zip.writestr(member, buf.getvalue())
+            raise ValueError(f"{member} is already in {name}")
+        self._zip.writestr(member, data)
         self._members.add(member)
 
     def close(self) -> None:
@@ -102,15 +106,17 @@ class ShardReader:
         self._zips = {}
         self._pid = os.getpid()
 
-    def frames(self) -> list[int]:
+    def frames(self, suffix: str = ".npy") -> list[int]:
         frames = []
         for shard in sorted(self.directory.glob("shard_*.zip")):
-            frames.extend(int(Path(m).stem) for m in self._open(shard.name).namelist())
+            frames.extend(int(Path(m).stem) for m in self._open(shard.name).namelist() if m.endswith(suffix))
         return sorted(frames)
 
+    def read_bytes(self, frame: int, suffix: str) -> bytes:
+        return self._open(shard_name(frame)).read(member_name(frame, suffix))
+
     def read_record(self, frame: int) -> np.ndarray:
-        data = self._open(shard_name(frame)).read(member_name(frame))
-        return np.load(io.BytesIO(data), allow_pickle=False)
+        return np.load(io.BytesIO(self.read_bytes(frame, ".npy")), allow_pickle=False)
 
     def read(self, frame: int) -> np.ndarray:
         """float32 [N, 5]: x, y, z, intensity, ring."""

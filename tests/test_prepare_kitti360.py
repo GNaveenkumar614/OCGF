@@ -7,6 +7,7 @@ import pytest
 
 from ocgf.datasets import frame_index as fi
 from ocgf.datasets.dataset_map import discover_kitti360, missing_required, read_dataset_map
+from ocgf.datasets.kitti360 import Kitti360Sequence
 from ocgf.datasets.ply import read_ply
 from ocgf.datasets.prepare_kitti360 import PrepConfig, choose_dev_frames, run_all, stage_inputs
 from ocgf.datasets.supplement_io import ShardReader, decode, encode
@@ -97,8 +98,56 @@ def test_timestamps_come_from_the_timestamps_zip_when_the_scan_zip_has_none(tmp_
 def test_missing_inputs_stop_with_a_clear_message(tmp_path):
     paths = make_fake_kitti360(tmp_path, n_frames=4)
     (paths["input_root"] / "kitti-360-prepared-dataset" / "KITTI360" / "calibration" / "perspective.txt").unlink()
+    logged = []
     with pytest.raises(FileNotFoundError, match="calibration"):
-        stage_inputs(config(tmp_path, paths), log=lambda msg: None)
+        stage_inputs(config(tmp_path, paths), log=logged.append)
+    tree = "\n".join(logged)
+    assert "calibration/  (2 files)  <- calib_cam_to_pose.txt, calib_cam_to_velo.txt" in tree   # shows what is there
+    assert "kitti360-3d-bboxes/  (1 files)  <- 2013_05_28_drive_0000_sync.xml" in tree
+
+
+# ---------- the paper's other drives: images from the image_00 zip, one frame every 2.5 m, role-dependent windows
+
+@pytest.fixture(scope="module")
+def train_run(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("train_drive")
+    paths = make_fake_kitti360(tmp, n_frames=40, starter_images=False, windows=[(0, 25)])
+    cfg = config(tmp, paths, role="train", keep_every_m=2.5, dev_frames=0)
+    return cfg, run_all(cfg, log=lambda msg: None)
+
+
+def test_new_drive_keeps_and_stores_a_frame_every_2p5_m(train_run):
+    cfg, _ = train_run
+    index = fi.read_csv(cfg.frame_index_csv)
+    kept = index["frame"][index["kept"]]
+    assert len(kept) and (np.diff(index["odometer_m"][index["kept"]]) >= 2.5).all()
+    assert index["usable"][index["kept"]].all()
+    assert set(index["frame"][index["sample_5m"]]) <= set(kept.tolist())
+    assert ShardReader(cfg.scans_dir).frames() == kept.tolist()               # only kept scans were read
+    assert ShardReader(cfg.images_dir).frames(".png") == kept.tolist()        # and only kept images
+    assert (index["n_points_raw"][~index["kept"]] == -1).all() and (index["n_points_raw"][index["kept"]] > 0).all()
+
+
+def test_train_drives_may_leave_the_semantic_windows(train_run):
+    cfg, _ = train_run
+    index = fi.read_csv(cfg.frame_index_csv)
+    assert index["usable"][index["window_start"] < 0].any()      # frames after the only window (0-25) count
+
+
+def test_val_and_test_drives_keep_the_window_rule(tmp_path):
+    paths = make_fake_kitti360(tmp_path, n_frames=40, starter_images=False, windows=[(0, 25)])
+    index = run_all(config(tmp_path, paths, role="val", keep_every_m=2.5, dev_frames=0, n_overlays=0),
+                    log=lambda msg: None)["index"]
+    assert index["usable"].any() and not index["usable"][index["window_start"] < 0].any()
+
+
+def test_new_drive_output_loads_with_the_loader(train_run):
+    cfg, _ = train_run
+    seq = Kitti360Sequence(cfg.out_dir / "dataset_map.yaml")
+    f = int(seq.usable_frames()[0])
+    assert seq.image(f).shape == (376, 1408, 3)                   # read back from the image shards
+    assert len(seq.points(f)) > 0
+    assert (cfg.out_dir / "image_timestamps" / f"{SEQ}.txt").exists()
 
 
 def test_choose_dev_frames_stays_in_one_window_and_run():
