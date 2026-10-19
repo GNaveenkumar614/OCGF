@@ -4,6 +4,7 @@ CLAUDE.md
 
 # Datasets and anything derived from them (KITTI / KITTI-360 are CC BY-NC-SA 3.0; never redistributed)
 data/
+downloads/
 *.zip
 *.bin
 *.npz

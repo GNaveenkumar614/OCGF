@@ -14,6 +14,7 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "pyyaml>=6", "pillow>=9"]
 [project.optional-dependencies]
 torch = ["torch>=2.2", "torchvision>=0.17"]
 viz = ["matplotlib>=3.7"]
+tools = ["kaggle>=1.6"]          # scripts/download_supplements.py
 dev = ["pytest>=7", "matplotlib>=3.7"]
 
 [tool.setuptools.packages.find]

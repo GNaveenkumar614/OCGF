@@ -34,9 +34,12 @@ class Frame:
 
 
 class Kitti360Sequence:
-    def __init__(self, dataset_map):
-        self.map_path = Path(dataset_map)
-        self.sequence, self.paths = read_dataset_map(self.map_path)
+    def __init__(self, dataset_map=None, *, sequence: str | None = None, components: dict | None = None):
+        """From a dataset_map.yaml, or from (sequence, components), e.g. ocgf.datasets.locate.prepared_drive()."""
+        if dataset_map is not None:
+            self.sequence, self.paths = read_dataset_map(Path(dataset_map))
+        else:
+            self.sequence, self.paths = sequence, {k: Path(v) for k, v in components.items()}
         self.camera = kitti360_camera(self.paths["calibration"])
         self.T_pose_lidar = kitti360_pose_from_lidar(self.paths["calibration"])
         frames, T_world_pose = fi.read_poses(self.paths["poses"] / "poses.txt")
