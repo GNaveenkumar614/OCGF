@@ -22,6 +22,8 @@ Paper drives (kitti360_paper_v1): train 0000, 0002, 0004, 0005 · val 0006 · te
 """
 import argparse
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -55,6 +57,10 @@ def unzip_leftovers(folder: Path) -> None:
 
 
 def main(argv=None):
+    # The kaggle package writes a notebook's run log with the default encoding, which on Windows (cp1252) fails on the
+    # emoji in Kaggle's logs (seen 2026-10-19). UTF-8 mode can only be set at start-up, so restart in it.
+    if argv is None and sys.flags.utf8_mode == 0:
+        raise SystemExit(subprocess.run([sys.executable, "-X", "utf8", *sys.argv]).returncode)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--drives", nargs="+", default=list(PAPER_DRIVES), help="e.g. 0009 0010 (default: all paper drives)")
     p.add_argument("--owner", default="nanimack", help="Kaggle user that owns the datasets")
