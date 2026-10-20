@@ -90,6 +90,15 @@ def kitti360_pose_from_lidar(calib_dir) -> np.ndarray:
     return T_pose_cam @ invert_rigid(T_velo_cam)
 
 
+def kitti_object_rect_from_lidar(calib_file) -> np.ndarray:
+    """T_rect_lidar = R0_rect · Tr_velo_to_cam: LiDAR -> rectified camera 0, the frame KITTI label locations are in.
+
+    Not kitti_object_camera().T_cam_lidar, which also holds P2's offset to camera 2 (about 6 cm) for projecting pixels.
+    """
+    calib = read_calib_file(calib_file)
+    return rigid(calib["R0_rect"].reshape(3, 3), np.zeros(3)) @ rigid_from_3x4(calib["Tr_velo_to_cam"])
+
+
 def kitti_object_camera(calib_file, width: int, height: int) -> CameraCalib:
     """Left colour camera (image_2) of a KITTI Object frame. Image sizes vary per frame, so they are passed in."""
     calib = read_calib_file(calib_file)

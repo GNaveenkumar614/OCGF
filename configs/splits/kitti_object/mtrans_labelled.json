@@ -1,0 +1,24 @@
+{
+ "eligible_frames": 3712,
+ "frames_with": {
+  "cyclist": 345,
+  "large_vehicle": 1425,
+  "pedestrian": 1605
+ },
+ "selected": 500,
+ "min_score": 0.5,
+ "seed": 0,
+ "selected_with": {
+  "cyclist": 157,
+  "large_vehicle": 264,
+  "pedestrian": 339
+ },
+ "first_small_with": {
+  "cyclist": 41,
+  "large_vehicle": 63,
+  "pedestrian": 88
+ },
+ "detections_file": "training.txt",
+ "detections_sha256": "91c6f621ede83e004ed8f0d376041eef89b5e3a220bab36ef5234d5c3f4ed0e0",
+ "rule": "rounds of cyclist / large vehicle / pedestrian / random frames from zero-shot detections; the small set is the first frames of the large one"
+}

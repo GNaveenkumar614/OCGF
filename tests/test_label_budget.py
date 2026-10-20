@@ -47,3 +47,18 @@ def test_deterministic_for_a_seed():
     frames, dets = fake_detections()
     assert select_labelled_frames(dets, frames, seed=3)[0] == select_labelled_frames(dets, frames, seed=3)[0]
     assert select_labelled_frames(dets, frames, seed=3)[0] != select_labelled_frames(dets, frames, seed=4)[0]
+
+
+def test_frozen_mtrans_label_lists():
+    # Frozen 2026-10-20 from notebook 02 version 4 (detections sha256 91c6f621..., see mtrans_labelled.json).
+    # The label budget is a reported number in the paper: changing these lists means a new version, not an edit.
+    import hashlib
+    from pathlib import Path
+    d = Path(__file__).resolve().parents[1] / "configs" / "splits" / "kitti_object"
+    big, small = (d / "mtrans_labelled_500.txt").read_text().split(), (d / "mtrans_labelled_125.txt").read_text().split()
+    train, val = set((d / "train.txt").read_text().split()), set((d / "val.txt").read_text().split())
+    assert len(set(big)) == len(big) == 500 and small == big[:125]
+    assert set(big) <= train and not set(big) & val
+    sha = lambda name: hashlib.sha256((d / name).read_bytes()).hexdigest()
+    assert sha("mtrans_labelled_500.txt") == "01f286b25a324633c025234c1a6e68d3a0554f2412f1d99f8dd2d0da252e9e6e"
+    assert sha("mtrans_labelled_125.txt") == "6901a14ad326a30c7b99cd186bcf1c5accab94f12d5d7afb6b45d9b50c7a6e76"
