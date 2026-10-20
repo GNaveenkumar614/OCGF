@@ -3,18 +3,31 @@
     python scripts/train_mtrans.py --input-root /kaggle/input --detections <detector2d_v1>/kitti/training.txt \
         --out /kaggle/working/mtrans_v1 --cache /kaggle/temp/mtrans_cache [--smoke 64] [--time-budget-hours 11]
 
-Resumes from <out>/ckpt/last.pt. Writes records.json (object pools, anchors), metrics.jsonl, val_objects.jsonl
-(per-object IoU and confidence on KITTI val) and manifest.json.
+Resumes from <out>/ckpt/last.pt. Writes train.log (timestamped progress), records.json (object pools, anchors),
+metrics.jsonl, val_objects.jsonl (per-object IoU and confidence on KITTI val) and manifest.json.
 """
 import argparse
 import json
 import shutil
+import time
 from pathlib import Path
 
 from ocgf.datasets.kitti_object import kitti_fid
 from ocgf.datasets.locate import find_kitti_object
 from ocgf.teachers.mtrans.train import KITTI_SPLITS, REPO, build_pools, load_config, sha256_file, train
 from ocgf.utils.provenance import write_manifest
+
+
+def file_logger(path: Path):
+    """Print and append to a timestamped log file, so progress stays visible in the output folder (an interactive
+    notebook cell stops showing output when the browser disconnects; a saved run's log is only shown at the end)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(msg):
+        print(msg, flush=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    return log
 
 
 def main(argv=None):
@@ -48,9 +61,11 @@ def main(argv=None):
     read = lambda path: [kitti_fid(f) for f in Path(path).read_text().split()]
     frame_lists = {"train": read(args.splits_dir / "train.txt"), "val": read(args.splits_dir / "val.txt"),
                    "labelled": read(REPO / cfg.labelled_frames)}
-    pools = build_pools(cfg, folders, args.detections, args.cache, out, frame_lists=frame_lists)
+    log = file_logger(out / "train.log")
+    log(f"train_mtrans: {' '.join(argv) if argv else 'command line'}")
+    pools = build_pools(cfg, folders, args.detections, args.cache, out, log=log, frame_lists=frame_lists)
     result = train(cfg, pools, folders, args.cache, out, device=args.device, time_budget_hours=args.time_budget_hours,
-                   smoke=args.smoke)
+                   smoke=args.smoke, log=log)
     write_manifest(out / "manifest.json", teacher="mtrans", config=json.loads(json.dumps(cfg)),
                    labelled_frames=cfg.labelled_frames, labelled_sha256=sha256_file(REPO / cfg.labelled_frames),
                    detections=args.detections.name, detections_sha256=sha256_file(args.detections),
