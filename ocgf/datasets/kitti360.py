@@ -77,6 +77,10 @@ class Kitti360Sequence:
     def points(self, frame: int) -> np.ndarray:
         return self._scans.read(frame)
 
+    def posed_frames(self) -> np.ndarray:
+        """Frames with a SLAM pose, sorted (poses are missing where the car stops or creeps)."""
+        return np.array(sorted(self._T_world_lidar), dtype=np.int64)
+
     def T_world_lidar(self, frame: int) -> np.ndarray:
         if frame not in self._T_world_lidar:
             raise KeyError(f"{self.fid(frame)} has no pose")
@@ -88,3 +92,45 @@ class Kitti360Sequence:
     def gt_boxes(self, frame: int, max_gap: int = 5) -> FrameBoxes:
         """KITTI-360 ground-truth boxes in the frame's LiDAR frame. Evaluation and QA only."""
         return self._boxes.at(frame, self.T_world_lidar(frame), max_gap)
+
+
+def stage_drive(components: dict, frames, dst, threads: int = 32, log=print) -> dict:
+    """Copy what per-frame reads touch (scan and image shards, starter images, 2D semantics) for these frames to a
+    local folder with parallel readers, and return the components pointing there. Calibration, poses, boxes, the frame
+    index and the 3D semantics stay where they are (read once). See ocgf.utils.staging: /kaggle/input is slow per file.
+
+    Shards are copied whole when they are zip files, member by member when Kaggle unpacked them into folders."""
+    from ..utils.staging import parallel_copy
+    from .supplement_io import member_name, shard_name
+
+    dst, frames = Path(dst), sorted({int(f) for f in frames})
+    out, jobs = dict(components), []
+
+    def shards(key, suffix):
+        src = Path(components[key])
+        for name in sorted({shard_name(f) for f in frames}):
+            if (src / name).is_file():
+                jobs.append((src / name, dst / key / name))
+            else:
+                folder = src / name if (src / name).is_dir() else src / name[:-4]
+                jobs.extend((folder / member_name(f, suffix), dst / key / name[:-4] / member_name(f, suffix))
+                            for f in frames if shard_name(f) == name and (folder / member_name(f, suffix)).exists())
+        out[key] = dst / key
+
+    shards("scans", ".npy")
+    if "image_shards" in components:
+        shards("image_shards", ".png")
+    elif "images" in components:
+        jobs.extend((Path(components["images"]) / f"{f:010d}.png", dst / "images" / f"{f:010d}.png") for f in frames)
+        out["images"] = dst / "images"
+    if "semantics2d" in components:
+        src = Path(components["semantics2d"])
+        for sub in ("semantic", "instance"):
+            jobs.extend((src / sub / f"{f:010d}.png", dst / "semantics2d" / sub / f"{f:010d}.png")
+                        for f in frames if (src / sub / f"{f:010d}.png").exists())
+        out["semantics2d"] = dst / "semantics2d"
+    for key in ("scans", "image_shards", "images", "semantics2d"):
+        if key in out and Path(out[key]).is_relative_to(dst):
+            Path(out[key]).mkdir(parents=True, exist_ok=True)
+    parallel_copy(jobs, threads, log, every=500)
+    return out

@@ -1,0 +1,22 @@
+# Road teacher v1 (trajectory-based LiDAR-camera road autolabeling). Values follow the original's params_kitti360.yaml.
+trajectory_length: 50.0
+lidar_fov_deg: 120.0
+drop_rings: 7
+distance_filter: 0.05
+height_filter: 0.3
+max_scan2pose: 1.0
+max_center2wheel: 2.0
+wheel_offset: 1.0
+occlusion_px: 10.0
+origin_center: [1.9, 0.0, -1.73]
+origin_left: [1.9, 0.8, -1.73]
+origin_right: [1.9, -0.8, -1.73]
+use_height: true
+use_gradient: true
+height_std: 0.1
+gradient_std: 0.05
+max_radial_dist: 5.0
+camera_model: dinov2_vitg14_reg     # 'none' runs the LiDAR step only
+camera_std: 0.5
+min_reference_pixels: 200
+img_scale: 1.0
