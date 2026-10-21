@@ -62,3 +62,22 @@ def test_a_run_stopped_by_the_time_budget_resumes(tmp_path):
     assert second["epochs_done"] == 2 and any("resumed" in m for m in messages)
     epochs = [json.loads(line)["epoch"] for line in (out / "metrics.jsonl").read_text().splitlines()]
     assert epochs == [0, 1]
+
+
+def test_changing_the_epoch_count_re_plans_the_schedule_from_the_current_rate(tmp_path):
+    folders, detections = fake_kitti(tmp_path)
+    out = tmp_path / "out"
+    cfg = tiny_config(**{"train.epochs": 6, "train.warmup_rate": 0.0})
+    pools = build_pools(cfg, folders, detections, tmp_path / "cache", out, log=quiet, frame_lists=FRAME_LISTS)
+    train(cfg, pools, folders, tmp_path / "cache", out, device="cpu", time_budget_hours=0.0, log=quiet)   # epoch 0
+    lr_before = json.loads((out / "metrics.jsonl").read_text().splitlines()[-1])["lr"]
+
+    messages = []
+    shorter = tiny_config(**{"train.epochs": 3, "train.warmup_rate": 0.0})
+    train(shorter, pools, folders, tmp_path / "cache", out, device="cpu", time_budget_hours=0.0, log=messages.append)
+    assert any("re-planned from 6 to 3 epochs" in m for m in messages)               # epoch 1, new schedule
+    train(shorter, pools, folders, tmp_path / "cache", out, device="cpu", log=messages.append)     # resumes it, epoch 2
+    lrs = [json.loads(line)["lr"] for line in (out / "metrics.jsonl").read_text().splitlines()]
+    assert len(lrs) == 3 and lrs[0] == lr_before
+    assert lrs[0] > lrs[1] > lrs[2] and lrs[2] < 0.3 * lrs[0]                    # decays towards zero at epoch 3
+    assert sum("re-planned" in m for m in messages) == 1                          # the third run continues it

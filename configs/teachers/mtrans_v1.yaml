@@ -17,7 +17,8 @@ data:
   class_balance_power: 0.5       # OCGF: labelled objects drawn with weight n_class^-0.5; 0 = no balancing
 
 train:
-  epochs: 300
+  epochs: 100                    # OCGF (decided 2026-10-21): the original's 300 would take about 41 h on one T4;
+                                 # the first run started with 300 and was re-planned to 100 when it resumed
   lr: 1.0e-4
   warmup_rate: 0.01
   batch_size: 8

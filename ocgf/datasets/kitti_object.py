@@ -50,39 +50,16 @@ def read_labels(label_file, calib_file) -> list[dict]:
 def stage_kitti(folders: dict, fids, dst, threads: int = 32, log=print) -> dict:
     """Copy image_2, calib and label_2 of the given frames to a local folder with parallel readers; returns folders
     for KittiObjectFrames (velodyne stays where it is: ProjectedFrames caches the in-image points instead).
-
-    On Kaggle, files under /kaggle/input are slow to read one after another (about 5 s per frame for a scan and an
-    image header on 2026-10-20) but parallel reads add up, so a run copies its inputs once and then reads local files.
-    Files already copied are skipped, so an interrupted copy resumes.
-    """
-    import shutil
-    import time
-    from concurrent.futures import ThreadPoolExecutor
+    See ocgf.utils.staging: /kaggle/input is slow per file but serves parallel reads."""
+    from ..utils.staging import parallel_copy
 
     dst = Path(dst)
     suffix = {"image_2": ".png", "calib": ".txt", "label_2": ".txt"}
-    jobs = []
-    for name, ext in suffix.items():
+    jobs = [(Path(folders[name]) / f"{parse_frame_id(fid)[2]:06d}{ext}", dst / name / f"{parse_frame_id(fid)[2]:06d}{ext}")
+            for name, ext in suffix.items() for fid in fids]
+    for name in suffix:
         (dst / name).mkdir(parents=True, exist_ok=True)
-        for fid in fids:
-            target = dst / name / f"{parse_frame_id(fid)[2]:06d}{ext}"
-            if not target.exists():
-                jobs.append((Path(folders[name]) / target.name, target))
-
-    def copy(job):
-        src, target = job
-        tmp = target.with_name(target.name + ".part")
-        shutil.copyfile(src, tmp)
-        tmp.replace(target)
-        return target.stat().st_size
-
-    t0, done, size = time.time(), 0, 0
-    with ThreadPoolExecutor(threads) as pool:
-        for n in pool.map(copy, jobs):
-            done, size = done + 1, size + n
-            if log and (done % 2000 == 0 or done == len(jobs)):
-                rate = size / 1e6 / max(time.time() - t0, 1e-6)
-                log(f"  staged {done}/{len(jobs)} files, {size / 1e9:.2f} GB, {rate:.1f} MB/s")
+    parallel_copy(jobs, threads, log)
     return {"image_2": dst / "image_2", "calib": dst / "calib", "label_2": dst / "label_2",
             "velodyne": Path(folders["velodyne"])}
 

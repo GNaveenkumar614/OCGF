@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import time
@@ -153,6 +154,35 @@ def evaluate(model, loader, device, classes, per_object_file=None, amp: bool = F
 
 # ---------------------------------------------------------------- training
 
+class ContinuedCosine:
+    """Cosine decay from the learning rate at start_step to zero at total_steps.
+
+    Used when a run is re-planned to another number of epochs after it started: the epoch count fixes the original
+    warm-up + cosine schedule, so stopping that schedule early would end training at a high learning rate. The re-planned
+    schedule continues smoothly from the current rate (decided 2026-10-21: 300 -> 100 epochs at about 39 h for the rest).
+    """
+    kind = "continued_cosine"
+
+    def __init__(self, optimizer, lr0: float, start_step: int, total_steps: int, current_step: int | None = None):
+        self.optimizer, self.lr0 = optimizer, float(lr0)
+        self.start_step, self.total_steps = int(start_step), int(total_steps)
+        self.current_step = self.start_step if current_step is None else int(current_step)
+
+    def step(self):
+        frac = min(1.0, (self.current_step - self.start_step) / max(1, self.total_steps - self.start_step))
+        for g in self.optimizer.param_groups:
+            g["lr"] = self.lr0 * 0.5 * (1 + math.cos(math.pi * frac))
+        self.current_step += 1
+
+    def state_dict(self) -> dict:
+        return {"kind": self.kind, "lr0": self.lr0, "start_step": self.start_step, "total_steps": self.total_steps,
+                "current_step": self.current_step}
+
+    @classmethod
+    def from_state(cls, optimizer, state: dict) -> "ContinuedCosine":
+        return cls(optimizer, state["lr0"], state["start_step"], state["total_steps"], state["current_step"])
+
+
 def save_checkpoint(path: Path, **state) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -204,11 +234,20 @@ def train(cfg, pools, kitti_folders: dict, cache_dir, out_dir, device=None, time
         ckpt = torch.load(last, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
         optim.load_state_dict(ckpt["optimizer"])
-        scheduler.load_state_dict(ckpt["scheduler"])
         if amp and ckpt.get("scaler"):
             scaler.load_state_dict(ckpt["scaler"])
         start_epoch = int(ckpt["epoch"]) + 1
         log(f"resumed from {last}: {start_epoch} of {epochs} epochs done")
+        state, total = ckpt["scheduler"], epochs * len(lab_loader)
+        if state.get("kind") == ContinuedCosine.kind and state["total_steps"] == total:
+            scheduler = ContinuedCosine.from_state(optim, state)
+        elif state.get("kind") != ContinuedCosine.kind and int(ckpt.get("epochs", epochs)) == epochs:
+            scheduler.load_state_dict(state)
+        else:                                   # the number of epochs changed since the run started
+            lr_now = optim.param_groups[0]["lr"]
+            scheduler = ContinuedCosine(optim, lr_now, start_epoch * len(lab_loader), total)
+            log(f"learning-rate schedule re-planned from {ckpt.get('epochs')} to {epochs} epochs at epoch {start_epoch}: "
+                f"cosine from the current rate {lr_now:.2e} to zero at epoch {epochs}")
     metrics_log = out_dir / "metrics.jsonl"
 
     def write_metrics(entry):
