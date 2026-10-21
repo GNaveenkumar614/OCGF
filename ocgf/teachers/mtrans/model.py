@@ -10,6 +10,7 @@
 #   - predict() returns boxes in the LiDAR frame with the raw confidence. It replaces format_kitti_labels, which
 #     divided the score by the batch maximum of the confidence, making every score depend on the rest of the batch;
 #   - get_loss works on batches without labelled objects and returns per-object IoU for per-class metrics;
+#   - head outputs and the loss in float32, so the forward pass can run under mixed precision;
 #   - orientation helpers vectorised (same results); easydict replaced by AttrDict.
 """MTrans: a 2D box and the LiDAR points in its frustum -> 3D box, foreground segmentation, completed points and a
 confidence regressed to the 3D IoU of the box (a quality estimate, not a calibrated probability)."""
@@ -211,8 +212,9 @@ class MTrans(nn.Module):
         global_f2d = torch.nn.AdaptiveAvgPool2d((1, 1))(image_features).squeeze(-1).squeeze(-1)  # (B, Ci)
 
         box_feature = torch.cat([cls_f3d.squeeze(1), global_f3d, global_f2d, self.class_embedding(data_dict.classes)], dim=-1)
-        box = self.box_head(box_feature)
-        conf_dir_pred = self.conf_dir_head(box_feature)
+        # float32 from here on: under mixed precision, exp / tanh / arcsin of half-precision outputs overflow or saturate
+        box = self.box_head(box_feature).float()
+        conf_dir_pred = self.conf_dir_head(box_feature).float()
 
         location, dimension, yaw = box[:, 0:3], box[:, 3:6], box[:, 6:7]
         direction, confidence = conf_dir_pred[:, 0:2], conf_dir_pred[:, 2:3]
@@ -248,6 +250,8 @@ class MTrans(nn.Module):
         """Returns (total loss, {name: (value, count)} running stats, IoU3D per labelled object, confidence per
         labelled object). Segmentation and box terms use labelled objects only; the point reconstruction uses all."""
         stats = {}
+        # the loss always runs in float32, also after a mixed-precision forward pass
+        pred_dict = {k: (v.float() if torch.is_tensor(v) and v.is_floating_point() else v) for k, v in pred_dict.items()}
         B = pred_dict['batch_size']
         has_label = data_dict.use_3d_label                      # (B)
         real_point_mask = data_dict.real_point_mask            # (B, N)

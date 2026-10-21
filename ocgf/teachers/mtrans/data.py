@@ -64,6 +64,18 @@ class ProjectedFrames:
     def image(self, fid: str) -> np.ndarray:
         return self.source.image(fid)
 
+    def warm(self, fids, threads: int = 32, log=print) -> None:
+        """Fill the cache for these frames with parallel readers (slow network mounts serve parallel reads well)."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        todo = [f for f in fids if not (self.cache_dir / (f.replace("/", "__") + ".npy")).exists()] if self.cache_dir else []
+        t0 = time.time()
+        with ThreadPoolExecutor(threads) as pool:
+            for k, _ in enumerate(pool.map(self.projected, todo), start=1):
+                if log and (k % 1000 == 0 or k == len(todo)):
+                    log(f"  point cache: {k}/{len(todo)} frames, {k / max(time.time() - t0, 1e-6):.1f} frames/s")
+
 
 # ---------------------------------------------------------------- objects and records
 

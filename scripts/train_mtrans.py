@@ -12,8 +12,9 @@ import shutil
 import time
 from pathlib import Path
 
-from ocgf.datasets.kitti_object import kitti_fid
+from ocgf.datasets.kitti_object import KittiObjectFrames, kitti_fid, stage_kitti
 from ocgf.datasets.locate import find_kitti_object
+from ocgf.teachers.mtrans.data import ProjectedFrames
 from ocgf.teachers.mtrans.train import KITTI_SPLITS, REPO, build_pools, load_config, sha256_file, train
 from ocgf.utils.provenance import write_manifest
 
@@ -42,6 +43,9 @@ def main(argv=None):
     p.add_argument("--smoke", type=int, default=0, metavar="N", help="one epoch on N objects per pool, then exit")
     p.add_argument("--time-budget-hours", type=float, default=11.0)
     p.add_argument("--device")
+    p.add_argument("--amp", action="store_true", help="mixed precision (fp16 forward, fp32 loss); default: the config")
+    p.add_argument("--stage-dir", type=Path, help="copy images, calib and labels here first (slow input mounts)")
+    p.add_argument("--threads", type=int, default=32, help="parallel readers for staging and the point cache")
     p.add_argument("--splits-dir", type=Path, default=KITTI_SPLITS, help="folder with train.txt and val.txt (tests)")
     args = p.parse_args(argv)
 
@@ -50,6 +54,8 @@ def main(argv=None):
         cfg.labelled_frames = args.labelled_frames
     if args.epochs:
         cfg.train.epochs = args.epochs
+    if args.amp:
+        cfg.train.amp = True
     folders = find_kitti_object(args.input_root)
     missing = [f for f in ("image_2", "velodyne", "calib", "label_2") if f not in folders]
     if missing:
@@ -63,6 +69,12 @@ def main(argv=None):
                    "labelled": read(REPO / cfg.labelled_frames)}
     log = file_logger(out / "train.log")
     log(f"train_mtrans: {' '.join(argv) if argv else 'command line'}")
+    fids = sorted(set(frame_lists["train"]) | set(frame_lists["val"]))
+    if args.stage_dir:
+        log(f"staging images, calibration and labels of {len(fids)} frames to {args.stage_dir} ({args.threads} readers)")
+        folders = stage_kitti(folders, fids, args.stage_dir, args.threads, log)
+    log(f"point cache for {len(fids)} frames in {args.cache} ({args.threads} readers)")
+    ProjectedFrames(KittiObjectFrames(folders), args.cache).warm(fids, args.threads, log)
     pools = build_pools(cfg, folders, args.detections, args.cache, out, log=log, frame_lists=frame_lists)
     result = train(cfg, pools, folders, args.cache, out, device=args.device, time_budget_hours=args.time_budget_hours,
                    smoke=args.smoke, log=log)

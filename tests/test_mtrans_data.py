@@ -102,3 +102,9 @@ def test_an_all_black_crop_still_gives_query_pixels(setup):
 def test_overlapping_boxes():
     boxes = np.array([[0, 0, 10, 10], [5, 5, 15, 15], [20, 20, 30, 30], [10, 0, 20, 10]], dtype=float)
     assert _overlapping(boxes) == [[1], [0, 3], [], [1]]      # touching edges do not overlap
+
+
+def test_parallel_warm_up_fills_the_cache(setup, tmp_path):
+    _, frames, _ = setup
+    frames.warm([kitti_fid(3), kitti_fid(5), kitti_fid(8)], threads=3, log=None)
+    assert len(list((tmp_path / "cache").glob("*.npy"))) == 3

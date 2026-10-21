@@ -127,13 +127,14 @@ def summarize(classes, cls_idx, iou, conf) -> dict:
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, classes, per_object_file=None) -> dict:
+def evaluate(model, loader, device, classes, per_object_file=None, amp: bool = False) -> dict:
     """Objects with human 3D labels, given their ground-truth 2D boxes (as MTrans reports it)."""
     model.eval()
     cls_idx, ious, confs, rows = [], [], [], []
     for data in loader:
         data = to_device(data, device)
-        pred = model(data)
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
+            pred = model(data)
         _, _, iou, conf = model.get_loss(pred, data)
         labelled = data.use_3d_label.cpu().numpy()
         c = data.classes.cpu().numpy()[labelled]
@@ -188,10 +189,13 @@ def train(cfg, pools, kitti_folders: dict, cache_dir, out_dir, device=None, time
 
     model = MTrans(cfg.model, anchors).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=float(t.lr))
+    amp = bool(t.get("amp", False)) and device.type == "cuda"     # mixed precision: forward in fp16, loss in fp32
+    scaler = torch.amp.GradScaler("cuda", enabled=amp)
     scheduler = WarmupCosineAnnealing(optim, float(t.lr), float(t.warmup_rate), epochs * len(lab_loader), eta_min=0)
     scheduler.step()
     log(f"MTrans: {sum(p.numel() for p in model.parameters()):,} parameters on {device}; objects: "
-        f"{len(labelled)} labelled, {len(unlabelled)} unlabelled, {len(val)} val; {len(lab_loader)} steps per epoch")
+        f"{len(labelled)} labelled, {len(unlabelled)} unlabelled, {len(val)} val; {len(lab_loader)} steps per epoch; "
+        f"{'mixed precision' if amp else 'float32'}")
 
     ckpt_dir = out_dir / "ckpt"
     last = ckpt_dir / "last.pt"
@@ -201,6 +205,8 @@ def train(cfg, pools, kitti_folders: dict, cache_dir, out_dir, device=None, time
         model.load_state_dict(ckpt["model"])
         optim.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
+        if amp and ckpt.get("scaler"):
+            scaler.load_state_dict(ckpt["scaler"])
         start_epoch = int(ckpt["epoch"]) + 1
         log(f"resumed from {last}: {start_epoch} of {epochs} epochs done")
     metrics_log = out_dir / "metrics.jsonl"
@@ -214,8 +220,11 @@ def train(cfg, pools, kitti_folders: dict, cache_dir, out_dir, device=None, time
         t_epoch = time.time()
         model.train()
         totals, counts = {}, {}
+        wait = compute = 0.0                       # seconds waiting for data / computing, since the last log line
         unl_iter = iter(unl_loader) if unl_loader else None
-        for step, data in enumerate(lab_loader):
+        lab_iter, tick = iter(lab_loader), time.time()
+        for step in range(len(lab_loader)):
+            data = next(lab_iter)
             if unl_iter is not None:
                 try:
                     extra = next(unl_iter)
@@ -224,32 +233,42 @@ def train(cfg, pools, kitti_folders: dict, cache_dir, out_dir, device=None, time
                     extra = next(unl_iter)
                 data = merge_batches(data, extra)
             data = to_device(data, device)
+            got = time.time()
+            wait += got - tick
             optim.zero_grad()
-            pred = model(data)
-            loss, stats, _, _ = model.get_loss(pred, data)
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
+                pred = model(data)
+            loss, stats, _, _ = model.get_loss(pred, data)          # .item() calls inside: waits for the GPU
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"non-finite loss at epoch {epoch} step {step}: {stats}")
-            loss.backward()
-            optim.step()
+            scaler.scale(loss).backward()
+            scaler.step(optim)
+            scaler.update()
             scheduler.step()
+            tick = time.time()
+            compute += tick - got
             for k, (v, n) in stats.items():
                 totals[k] = totals.get(k, 0.0) + v * n
                 counts[k] = counts.get(k, 0) + n
             if step % int(t.log_every) == 0:
                 avg = {k: totals[k] / counts[k] for k in totals}
+                n_steps = 1 if step == 0 else int(t.log_every)
                 log(f"  epoch {epoch} step {step}/{len(lab_loader)}: loss {avg['loss']:.3f}, "
-                    f"IoU {avg.get('iou3d', float('nan')):.3f}, xyz err {avg['err_dist']:.3f} m")
+                    f"IoU {avg.get('iou3d', float('nan')):.3f}, xyz err {avg['err_dist']:.3f} m | per step: "
+                    f"data wait {wait / n_steps:.2f} s, compute {compute / n_steps:.2f} s")
+                wait = compute = 0.0
         train_stats = {k: round(totals[k] / counts[k], 5) for k in totals}
         entry = {"epoch": epoch, "train": train_stats, "lr": optim.param_groups[0]["lr"]}
 
         is_last = epoch + 1 == epochs
         if is_last or (int(t.eval_every) and (epoch + 1) % int(t.eval_every) == 0):
             per_object = out_dir / "val_objects.jsonl" if is_last else None
-            entry["val"] = evaluate(model, val_loader, device, classes, per_object)
+            entry["val"] = evaluate(model, val_loader, device, classes, per_object, amp)
             log(f"  epoch {epoch} val (GT 2D boxes): " + ", ".join(
                 f"{c} IoU {v['mean_iou3d']:.3f} R0.7 {v['recall_0.7']:.3f}" for c, v in entry["val"].items() if v["n"]))
         save_checkpoint(last, epoch=epoch, epochs=epochs, model=model.state_dict(), optimizer=optim.state_dict(),
-                        scheduler=scheduler.state_dict(), classes=list(classes), anchors=[list(a) for a in anchors],
+                        scheduler=scheduler.state_dict(), scaler=scaler.state_dict() if amp else None,
+                        classes=list(classes), anchors=[list(a) for a in anchors],
                         model_config=json.loads(json.dumps(cfg.model)), data_config=json.loads(json.dumps(d)))
         epoch_seconds.append(time.time() - t_epoch)
         entry["seconds"] = round(epoch_seconds[-1], 1)

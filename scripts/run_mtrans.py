@@ -13,7 +13,7 @@ Every detector box at or above --min-score gets one line; see ocgf/teachers/mtra
 import argparse
 from pathlib import Path
 
-from ocgf.datasets.kitti_object import KittiObjectFrames, kitti_fid
+from ocgf.datasets.kitti_object import KittiObjectFrames, kitti_fid, stage_kitti
 from ocgf.datasets.locate import find_kitti_object, prepared_drive
 from ocgf.teachers.detector2d.mapping import read_detections
 from ocgf.teachers.mtrans.data import ProjectedFrames, detection_objects
@@ -37,13 +37,18 @@ def main(argv=None):
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--device")
+    p.add_argument("--stage-dir", type=Path, help="KITTI: copy images and calib here first (slow input mounts)")
+    p.add_argument("--threads", type=int, default=32, help="parallel readers for staging and the point cache")
     p.add_argument("--splits-dir", type=Path, default=KITTI_SPLITS, help="folder with train.txt and val.txt (tests)")
     args = p.parse_args(argv)
 
     detections = read_detections(args.detections)
     if args.kitti_split:
-        source = KittiObjectFrames(find_kitti_object(args.input_root))
+        folders = find_kitti_object(args.input_root)
         fids = [kitti_fid(f) for f in (args.splits_dir / f"{args.kitti_split}.txt").read_text().split()]
+        if args.stage_dir:
+            folders = stage_kitti(folders, fids, args.stage_dir, args.threads)
+        source = KittiObjectFrames(folders)
     else:
         from ocgf.datasets.kitti360 import Kitti360Sequence
         seq = Kitti360Sequence(sequence=args.sequence, components=prepared_drive(args.input_root, args.sequence))
@@ -51,7 +56,9 @@ def main(argv=None):
         fids = sorted(f for f in detections if f.split("/")[1] == args.sequence)
     model, meta = load_model(args.checkpoint, args.device)
     objects = detection_objects(detections, fids, args.min_score, tuple(meta["classes"]))
-    summary = infer(model, meta, ProjectedFrames(source, args.cache), objects, args.out, args.batch_size,
+    frames = ProjectedFrames(source, args.cache)
+    frames.warm(fids, args.threads)
+    summary = infer(model, meta, frames, objects, args.out, args.batch_size,
                     args.min_points, args.num_workers)
     write_manifest(args.out.with_suffix(".manifest.json"), teacher="mtrans", checkpoint=args.checkpoint.name,
                    checkpoint_sha256=sha256_file(args.checkpoint), epoch=meta["epoch"], classes=meta["classes"],

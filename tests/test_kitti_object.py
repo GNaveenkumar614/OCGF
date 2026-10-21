@@ -36,3 +36,17 @@ def test_box_centres_project_inside_their_2d_boxes(tmp_path):
         uv, _, valid = project(o["box"][None, :3], cam)
         l, t, r, b = o["box_2d"]
         assert valid[0] and l < uv[0, 0] < r and t < uv[0, 1] < b
+
+
+def test_staging_copies_the_frames_and_resumes(tmp_path):
+    from ocgf.datasets.kitti_object import stage_kitti
+    folders = make_fake_kitti_object(tmp_path)
+    fids = [kitti_fid(3), kitti_fid(5)]
+    staged = stage_kitti(folders, fids, tmp_path / "local", threads=4, log=None)
+    assert sorted(p.name for p in staged["image_2"].iterdir()) == ["000003.png", "000005.png"]
+    assert staged["velodyne"] == folders["velodyne"]                       # scans are read once, into the cache
+    local = KittiObjectFrames(staged)
+    assert np.allclose(local.labels(kitti_fid(3))[0]["box"], KittiObjectFrames(folders).labels(kitti_fid(3))[0]["box"])
+    (staged["calib"] / "000005.txt").write_text("already here")             # existing files are kept
+    stage_kitti(folders, fids, tmp_path / "local", threads=4, log=None)
+    assert (staged["calib"] / "000005.txt").read_text() == "already here"

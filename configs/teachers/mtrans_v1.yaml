@@ -26,6 +26,7 @@ train:
   eval_every: 25                 # validation for reporting only; it never selects the checkpoint
   log_every: 200
   num_workers: 4
+  amp: false                     # OCGF: mixed precision (fp16 forward, fp32 loss) on GPU; the original trains in fp32
 
 model:
   mask_and_jitter: true
