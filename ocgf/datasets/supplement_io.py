@@ -98,8 +98,27 @@ class ShardWriter:
         self.close()
 
 
+class _FolderShard:
+    """A shard that was unpacked into a folder of the same name (Kaggle unpacks zip files inside uploaded archives)."""
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+
+    def namelist(self) -> list[str]:
+        return sorted(p.name for p in self.folder.iterdir() if p.is_file())
+
+    def read(self, member: str) -> bytes:
+        return (self.folder / member).read_bytes()
+
+    def close(self) -> None:
+        pass
+
+
 class ShardReader:
-    """Reads records by frame id. Zip handles are opened lazily and reopened in a forked worker process."""
+    """Reads records by frame id. Zip handles are opened lazily and reopened in a forked worker process.
+
+    A shard may be the zip file written by ShardWriter (shard_000.zip) or the folder Kaggle unpacks it into when the
+    data is uploaded as an archive (shard_000/ or shard_000.zip/); both read the same."""
 
     def __init__(self, directory):
         self.directory = Path(directory)
@@ -107,10 +126,11 @@ class ShardReader:
         self._pid = os.getpid()
 
     def frames(self, suffix: str = ".npy") -> list[int]:
+        names = sorted({p.name if p.name.endswith(".zip") else p.name + ".zip" for p in self.directory.glob("shard_*")})
         frames = []
-        for shard in sorted(self.directory.glob("shard_*.zip")):
-            frames.extend(int(Path(m).stem) for m in self._open(shard.name).namelist() if m.endswith(suffix))
-        return sorted(frames)
+        for name in names:
+            frames.extend(int(Path(m).stem) for m in self._open(name).namelist() if m.endswith(suffix))
+        return sorted(set(frames))
 
     def read_bytes(self, frame: int, suffix: str) -> bytes:
         return self._open(shard_name(frame)).read(member_name(frame, suffix))
@@ -126,7 +146,15 @@ class ShardReader:
         if os.getpid() != self._pid:            # handles must not be shared across processes
             self._zips, self._pid = {}, os.getpid()
         if name not in self._zips:
-            self._zips[name] = zipfile.ZipFile(self.directory / name, mode="r")
+            path = self.directory / name
+            if path.is_file():
+                self._zips[name] = zipfile.ZipFile(path, mode="r")
+            elif path.is_dir():
+                self._zips[name] = _FolderShard(path)                          # shard_000.zip/ (unpacked in place)
+            elif path.with_suffix("").is_dir():
+                self._zips[name] = _FolderShard(path.with_suffix(""))          # shard_000/
+            else:
+                raise FileNotFoundError(f"shard {name} not found in {self.directory} (neither a zip nor a folder)")
         return self._zips[name]
 
     def close(self) -> None:

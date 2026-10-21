@@ -55,7 +55,7 @@ def check_supplement(root, sequence: str | None = None, deep: bool = False) -> t
         problems.append("no report/report.md")
 
     if deep:
-        for shard in sorted(root.rglob("shard_*.zip")):
+        for shard in sorted(f for f in root.rglob("shard_*.zip") if f.is_file()):   # unpacked folders hold no zip
             try:
                 with zipfile.ZipFile(shard) as z:
                     bad = z.testzip()

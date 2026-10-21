@@ -5,6 +5,8 @@ import pytest
 
 from ocgf.datasets.supplement_io import RECORD, SHARD_SIZE, ShardReader, ShardWriter, decode, encode
 
+from kitti360_fixtures import synthetic_scan
+
 
 def scan(n: int = 1000, seed: int = 0):
     rng = np.random.default_rng(seed)
@@ -74,3 +76,19 @@ def test_a_later_session_appends_and_refuses_duplicates(tmp_path):
     assert reader.frames() == [0, 1]
     np.testing.assert_array_equal(reader.read_record(0), encode(*scan(seed=0)))
     reader.close()
+
+
+@pytest.mark.parametrize("folder_name", ["shard_000", "shard_000.zip"])
+def test_shards_unpacked_into_folders_read_the_same(tmp_path, folder_name):
+    # Kaggle unpacks zip files inside an uploaded archive: shard_000.zip becomes a folder
+    import zipfile
+    points, ring = synthetic_scan(points_per_ring=10, seed=1)
+    with ShardWriter(tmp_path / "zipped") as w:
+        w.write(7, encode(points, ring))
+        w.write_bytes(9, b"png bytes", ".png")
+    unpacked = tmp_path / "unpacked" / folder_name
+    with zipfile.ZipFile(tmp_path / "zipped" / "shard_000.zip") as z:
+        z.extractall(unpacked)
+    zipped, folder = ShardReader(tmp_path / "zipped"), ShardReader(tmp_path / "unpacked")
+    assert folder.frames() == zipped.frames() == [7] and folder.frames(".png") == [9]
+    assert np.array_equal(folder.read(7), zipped.read(7)) and folder.read_bytes(9, ".png") == b"png bytes"
