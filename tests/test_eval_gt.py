@@ -69,6 +69,7 @@ def test_observability_behind_the_car_and_outside_the_camera_view(frame5):
     assert not frame5["observed_lidar"][behind] and not frame5["observed_cam"][behind]
     assert frame5["observed_lidar"][cell(25, -1)] and frame5["observed_cam"][cell(25, -1)]
     assert frame5["observed_lidar"][cell(1.0, 7.5)] and not frame5["observed_cam"][cell(1.0, 7.5)]   # beside the camera
+    assert not frame5["observed_lidar"][cell(2.0, 0.0)] and not frame5["observed_cam"][cell(2.0, 0.0)]  # below the beams
     assert not frame5["labelled"][cell(40, -15)]                      # beyond the wall: no ground truth
 
 

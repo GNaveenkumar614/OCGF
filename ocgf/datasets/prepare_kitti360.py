@@ -339,7 +339,7 @@ def stage_scans(cfg: PrepConfig, src: dict, frames, log=_log) -> tuple[dict, dic
                 prof_counts.append(counts)
                 prof_elev.append(elevation)
             if (k + 1) % 500 == 0 or k + 1 == len(todo):
-                rate = (k + 1) / (time.time() - t0)
+                rate = (k + 1) / max(time.time() - t0, 1e-6)
                 log(f"  {k + 1}/{len(todo)} scans, {rate:.1f} scans/s, {(len(todo) - k - 1) / rate / 60:.1f} min left")
 
     order = np.argsort(stats["frame"])
@@ -371,7 +371,7 @@ def stage_images(cfg: PrepConfig, src: dict, frames, log=_log) -> Path | None:
         for k, frame in enumerate(todo):
             writer.write_bytes(frame, images.read_bytes(frame), ".png")
             if (k + 1) % 500 == 0 or k + 1 == len(todo):
-                rate = (k + 1) / (time.time() - t0)
+                rate = (k + 1) / max(time.time() - t0, 1e-6)
                 log(f"  {k + 1}/{len(todo)} images, {rate:.1f} images/s, {(len(todo) - k - 1) / rate / 60:.1f} min left")
     log(f"images written: {len(todo)} frames, {dir_size(cfg.images_dir) / GB:.2f} GB in {cfg.images_dir}")
     return cfg.images_dir

@@ -1,0 +1,22 @@
+# Student training v1, shared by every experiment (fair comparisons: same encoders, splits, budget and grid).
+# An experiment config names this file under `base:` and overrides keys.
+seed: 0
+targets: bev_targets_v1.yaml          # BEV inputs and targets config, relative to this folder
+model:
+  mode: concat                        # camera_ipm (E0a) | camera | lidar (E0b) | concat (E0c)
+  channels: 64
+  backbone: dinov2_vits14_reg         # frozen, self-supervised (Apache-2.0); "stub" for CPU smoke runs
+loss:
+  road: 1.0
+  occ: 1.0
+  unk: 0.5
+train:
+  epochs: 30                          # placeholder: fix the budget after the first timed run (plan: P1)
+  batch_size: 4
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 200
+  num_workers: 4
+  amp: true
+  log_every: 50
+  time_budget_hours: 11.0

@@ -14,7 +14,8 @@ Layers per frame on the BEV grid (200 x 160, indexed [ix, iy]):
                            5 other (every annotated object is occupied, whatever its class; decided 2026-10-16)
   obstacle        bool     >= min_obstacle_points points obstacle_min..obstacle_max above ground (static scene, or
                            moving objects at this frame): walls, fences, bushes, poles, unboxed objects
-  observed_lidar  bool     the cell's ground is in line of sight of the LiDAR, occluders = obstacle points and boxes
+  observed_lidar  bool     the cell's ground is in line of sight of the LiDAR, occluders = obstacle points and boxes,
+                           and at or above its lowest beam (lidar_min_elev_deg)
   observed_cam    bool     the same for the camera centre, and the ground point projects inside the image
 free_space(): drivable surface & ~occupied & ~obstacle & labelled & (observed_lidar | observed_cam).
 """
@@ -32,7 +33,7 @@ from ..geometry.bev_grid import BEVGrid
 from ..geometry.projection import project
 from ..geometry.raster import box_cells
 from ..geometry.transforms import invert_rigid
-from ..geometry.viewshed import viewshed
+from ..geometry.viewshed import above_lowest_beam, viewshed
 
 LAYERS = ("ground_z", "ground_class", "labelled", "occupied", "obstacle", "observed_lidar", "observed_cam")
 OCCUPIED_CLASSES = ("none", "car", "large_vehicle", "pedestrian", "cyclist", "other")
@@ -45,6 +46,9 @@ class GTConfig:
     min_obstacle_points: int = 2
     margin: float = 5.0                # m around the grid kept when cropping the clouds
     fallback_ground: float = -1.73     # LiDAR-frame ground height when a frame has no ground points at all
+    # the LiDAR first sees the ground about 4.7 m ahead (behind the bonnet; ring 0 is at -23.6 deg, about 4.1 m to
+    # the sides), measured on drive 0000; one conservative limit for every direction: cells nearer are never observed
+    lidar_min_elev_deg: float = -20.3
 
 
 # ---------------------------------------------------------------- clouds
@@ -156,7 +160,8 @@ def build_frame_gt(grid: BEVGrid, T_world_lidar, static: dict, dynamic: dict | N
         top = boxes.params[k, 2] + boxes.params[k, 5] / 2
         occluder_top[ix, iy] = np.fmax(occluder_top[ix, iy], top)
 
-    observed_lidar = viewshed(grid, (0.0, 0.0, 0.0), ground_z, occluder_top)
+    observed_lidar = (viewshed(grid, (0.0, 0.0, 0.0), ground_z, occluder_top)
+                      & above_lowest_beam(grid, (0.0, 0.0, 0.0), ground_z, cfg.lidar_min_elev_deg))
     cam_origin = invert_rigid(camera.T_cam_lidar)[:3, 3]
     xs, ys = grid.center_grid()
     _, _, in_fov = project(np.column_stack([xs.ravel(), ys.ravel(), z_fill.ravel()]), camera)

@@ -1,0 +1,4 @@
+# E0b: LiDAR only
+base: base.yaml
+model:
+  mode: lidar

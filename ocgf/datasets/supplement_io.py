@@ -125,6 +125,9 @@ class ShardReader:
         self._zips = {}
         self._pid = os.getpid()
 
+    def __getstate__(self):                       # spawned workers (Windows) reopen their own handles
+        return {**self.__dict__, "_zips": {}}
+
     def frames(self, suffix: str = ".npy") -> list[int]:
         names = sorted({p.name if p.name.endswith(".zip") else p.name + ".zip" for p in self.directory.glob("shard_*")})
         frames = []

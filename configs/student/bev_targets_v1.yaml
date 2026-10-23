@@ -1,0 +1,30 @@
+# Student BEV inputs (current scan + calibration) and training targets v1. Heuristics; see ocgf/geometry/ground.py,
+# ocgf/datasets/bev_inputs.py and ocgf/training/targets.py.
+bev_inputs:
+  ground:
+    coarse: 1.0
+    margin: 3.0
+    percentile: 10.0
+    seed_band: 0.2
+    min_seeds: 3
+    max_plane_dev: 2.0
+    max_step: 0.3
+    max_wide_dev: 0.4
+    ego_box: [-1.0, 2.0, 0.8]
+    seed_cap: 10.0
+    sigma: 1.0
+    sigma_wide: 4.0
+    hole_weight: 0.05
+    plane_weight: 0.05
+    support_full: 3.0
+    spread_scale: 0.1
+    plane: [0.0, 0.0, -1.73]        # nominal LiDAR height; to be fitted on drive-0000 train frames (fit_plane)
+  ground_band: 0.15
+  occluder_min: 0.3
+  occluder_max: 3.0
+  lidar_min_elev_deg: -20.3
+  az_res_deg: 0.25
+targets:
+  min_r_g: 0.1
+  min_occ_points: 2
+  road_negative: 0.8

@@ -61,7 +61,7 @@ def run_source(detector, items, load, out_dir, dataset: str, sequence: str, batc
                     counts[label] += 1
             done += len(batch)
             if done % (50 * batch_size) < batch_size or done == len(items):
-                rate = done / (time.time() - t0)
+                rate = done / max(time.time() - t0, 1e-6)
                 log(f"  {dataset}/{sequence}: {done}/{len(items)} images, {rate:.1f} img/s, "
                     f"{(len(items) - done) / rate / 60:.1f} min left")
     return {"images": len(items), "detections": counts, "seconds": round(time.time() - t0, 1)}

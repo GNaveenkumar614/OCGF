@@ -1,0 +1,4 @@
+# E0c: simple fusion, camera (lifted onto the scan's ground) and LiDAR concatenated
+base: base.yaml
+model:
+  mode: concat

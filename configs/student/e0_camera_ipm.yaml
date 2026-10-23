@@ -1,0 +1,4 @@
+# E0a: camera only, flat-plane IPM from the calibration, no LiDAR anywhere
+base: base.yaml
+model:
+  mode: camera_ipm

@@ -56,3 +56,14 @@ def viewshed(grid: BEVGrid, origin, ground_z: np.ndarray, occluder_top: np.ndarr
     look = np.floor((dist - margin) / d_res).astype(np.int64)            # only occluders clearly closer than the cell
     before = np.where(look >= 0, blocking[t_az, np.clip(look, 0, n_d - 1)], -np.inf)
     return np.isfinite(ground_z) & (target > before)
+
+
+def above_lowest_beam(grid: BEVGrid, origin, ground_z: np.ndarray, min_elev_deg: float) -> np.ndarray:
+    """Bool [nx, ny]: the cell's ground point lies at or above the sensor's lowest beam (elevation >= min_elev_deg).
+
+    A LiDAR cannot see the ground nearer than where its lowest beam meets it, whatever the line of sight says.
+    """
+    ox, oy, oz = (float(v) for v in origin)
+    xs, ys = grid.center_grid()
+    elev = np.degrees(np.arctan2(ground_z - oz, np.maximum(np.hypot(xs - ox, ys - oy), 1e-6)))
+    return np.isfinite(ground_z) & (elev >= min_elev_deg)
