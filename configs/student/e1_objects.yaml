@@ -1,0 +1,9 @@
+# E1 object arm, also E2's "concat" arm: simple fusion plus the object channels O_B before the decoder, box tops as
+# occluders in the viewshed, box-aware occupancy targets.
+base: base.yaml
+model:
+  mode: concat
+objects:
+  inputs: true
+  occluders: true
+  targets: true

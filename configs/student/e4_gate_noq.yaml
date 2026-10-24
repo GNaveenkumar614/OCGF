@@ -1,0 +1,6 @@
+# E4 learned gate from the camera and LiDAR features only (no reliability channels). No objects, to isolate Q.
+base: base.yaml
+model:
+  mode: ocgf
+  gate: learned
+  gate_q: false

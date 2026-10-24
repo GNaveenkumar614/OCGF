@@ -9,8 +9,9 @@ road_t  float32 in [0, 1], NaN = no target. The image label at the cell's ground
 unk_t   float32 0/1: 1 where neither sensor observes the cell's ground (outside both views, or in both shadows) or the
         ground estimate is unreliable (r_g < min_r_g). As in the evaluation ground truth, a cell observed by either
         sensor can be free.
-occ_t   float32, NaN = ignore: 1 where at least min_occ_points stand occluder_min..occluder_max above ground (the LiDAR
-        part; MTrans boxes join it later), 0 where road_t >= road_negative and nothing stands above ground.
+occ_t   float32, NaN = ignore: 1 where at least min_occ_points stand occluder_min..occluder_max above ground, and with
+        box_targets on the footprints of MTrans boxes of quality >= strict_quality (pseudo-labels); 0 where
+        road_t >= road_negative, nothing stands above ground and no detected box covers the cell.
 Labels stay soft. numpy only; reads the teachers' files directly and never imports ocgf.teachers.
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ import numpy as np
 from ..geometry.bev_grid import BEVGrid
 from ..geometry.ground import height_above_ground
 from ..geometry.projection import project
+from ..datasets.objects import any_footprints, strict_footprints
 
 TARGETS = ("road_t", "unk_t", "occ_t")
 
@@ -31,6 +33,8 @@ class TargetConfig:
     min_r_g: float = 0.1               # ground reliability below this: unknown
     min_occ_points: int = 2            # as the evaluation ground truth's obstacles
     road_negative: float = 0.8         # road_t at or above this, with nothing above ground: an occupancy negative
+    box_targets: bool = False          # MTrans boxes in occ_t (strict ones positive, none negative inside any box)
+    strict_quality: float = 0.3        # score_2d x conf_iou at or above which a box footprint is an occupancy label
 
     @classmethod
     def from_dict(cls, d: dict | None) -> TargetConfig:
@@ -77,9 +81,11 @@ def lidar_cell_scores(points, scores: np.ndarray, z_g: np.ndarray, grid: BEVGrid
 
 
 def build_targets(inputs: dict, label: np.ndarray, point_scores: np.ndarray, points, camera,
-                  grid: BEVGrid = BEVGrid(), cfg: TargetConfig = TargetConfig(), ground_band: float = 0.15) -> dict:
+                  grid: BEVGrid = BEVGrid(), cfg: TargetConfig = TargetConfig(), ground_band: float = 0.15,
+                  objects=None) -> dict:
     """road_t, unk_t, occ_t for one frame. inputs: ocgf.datasets.bev_inputs.bev_inputs() of the same scan; label: the
-    road teacher's image label [H, W] (NaN = unknown); point_scores: its per-point LiDAR scores, in scan order."""
+    road teacher's image label [H, W] (NaN = unknown); point_scores: its per-point LiDAR scores, in scan order;
+    objects: the frame's FrameObjects (used when cfg.box_targets)."""
     cam = sample_image_label(np.asarray(label, np.float32), inputs["z_g"], inputs["M_C"], camera, grid)
     lid = lidar_cell_scores(points, np.asarray(point_scores, np.float32), inputs["z_g"], grid, ground_band)
     road_t = np.where(np.isfinite(cam), cam, lid).astype(np.float32)
@@ -89,8 +95,14 @@ def build_targets(inputs: dict, label: np.ndarray, point_scores: np.ndarray, poi
     road_t[unk_t > 0] = np.nan                                   # nothing to learn about road where nobody looks
 
     occ_t = np.full(grid.shape, np.nan, np.float32)
-    occ_t[(inputs["n_above"] == 0) & (road_t >= cfg.road_negative)] = 0.0
+    boxes = cfg.box_targets and objects is not None and len(objects) > 0
+    negative = (inputs["n_above"] == 0) & (road_t >= cfg.road_negative)
+    if boxes:
+        negative &= ~any_footprints(objects, grid)
+    occ_t[negative] = 0.0
     occ_t[inputs["n_above"] >= cfg.min_occ_points] = 1.0
+    if boxes:
+        occ_t[strict_footprints(objects, grid, cfg.strict_quality)] = 1.0
     return {"road_t": road_t, "unk_t": unk_t, "occ_t": occ_t}
 
 

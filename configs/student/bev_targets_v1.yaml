@@ -24,7 +24,12 @@ bev_inputs:
   occluder_max: 3.0
   lidar_min_elev_deg: -20.3
   az_res_deg: 0.25
+  occluder_quality: 0.2           # MTrans boxes with score_2d x conf_iou at or above this occlude (when switched on)
 targets:
   min_r_g: 0.1
   min_occ_points: 2
   road_negative: 0.8
+  strict_quality: 0.3             # MTrans boxes with score_2d x conf_iou at or above this: occupancy pseudo-labels
+objects:
+  min_score: 0.1                  # detector boxes passed on as soft inputs (the MTrans inference floor)
+  max_distance: 5.0               # m, clip of the signed distance to the nearest box

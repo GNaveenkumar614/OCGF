@@ -16,7 +16,9 @@ Layers (200 x 160, indexed [ix, iy]):
   M_L             LiDAR validity: the cell has ground returns
   vis_lidar       the ground is in line of sight of the LiDAR and above its lowest beam
   shadow_lidar    above the lowest beam but hidden behind an occluder
-Occluders are columns, as in the evaluation ground truth: canopies above occluder_max are left out.
+Occluders are columns, as in the evaluation ground truth: canopies above occluder_max are left out. With
+box_occluders, the tops of the MTrans boxes at or above occluder_quality occlude too (the main configuration; ablation
+A3 uses the LiDAR points only). They are the student's own detections, so they are inputs, never ground truth.
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ from ..geometry.ground import GroundConfig, ground_surface, height_above_ground
 from ..geometry.projection import project
 from ..geometry.transforms import invert_rigid
 from ..geometry.viewshed import above_lowest_beam, viewshed
+from .objects import box_tops
 
 LAYERS = ("z_g", "r_g", "n_pts", "ground_hits", "h_max", "n_above", "occ_top", "fov_cam", "M_C", "shadow_cam", "M_L",
           "vis_lidar", "shadow_lidar")
@@ -42,6 +45,8 @@ class BEVInputConfig:
     occluder_max: float = 3.0           # m above ground: as in the evaluation ground truth
     lidar_min_elev_deg: float = -20.3   # the LiDAR's first ground return, about 4.7 m ahead (drive 0000)
     az_res_deg: float = 0.25
+    box_occluders: bool = False         # MTrans box tops occlude too (A3: off)
+    occluder_quality: float = 0.2       # score_2d x conf_iou at or above which a box occludes
 
     @classmethod
     def from_dict(cls, d: dict | None) -> BEVInputConfig:
@@ -55,8 +60,10 @@ class BEVInputConfig:
         return d
 
 
-def bev_inputs(points, camera, grid: BEVGrid = BEVGrid(), cfg: BEVInputConfig = BEVInputConfig()) -> dict:
-    """The layers above for one scan [N, >= 3] (LiDAR frame) and the camera calibration (CameraCalib)."""
+def bev_inputs(points, camera, grid: BEVGrid = BEVGrid(), cfg: BEVInputConfig = BEVInputConfig(),
+               objects=None) -> dict:
+    """The layers above for one scan [N, >= 3] (LiDAR frame) and the camera calibration (CameraCalib). objects:
+    the frame's ocgf.datasets.objects.FrameObjects, used when cfg.box_occluders."""
     nx, ny = grid.shape
     z_g, r_g = ground_surface(points, grid, cfg.ground)
     inside, h = height_above_ground(points, z_g, grid)
@@ -79,6 +86,8 @@ def bev_inputs(points, camera, grid: BEVGrid = BEVGrid(), cfg: BEVInputConfig = 
     occ_top = np.full((nx, ny), -np.inf)
     np.maximum.at(occ_top, (ix[occ], iy[occ]), p[occ, 2])
     occ_top[~np.isfinite(occ_top)] = np.nan
+    if cfg.box_occluders and objects is not None and len(objects):
+        occ_top = np.fmax(occ_top, box_tops(objects, grid, cfg.occluder_quality))
 
     xs, ys = grid.center_grid()
     _, _, fov = project(np.column_stack([xs.ravel(), ys.ravel(), z_g.ravel().astype(np.float64)]), camera)

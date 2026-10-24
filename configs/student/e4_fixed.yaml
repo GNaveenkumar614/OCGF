@@ -1,0 +1,5 @@
+# E4 fixed fusion: w_C = w_L = 0.5 where both sensors are valid (1 where only one is). No objects, to isolate Q.
+base: base.yaml
+model:
+  mode: ocgf
+  gate: fixed

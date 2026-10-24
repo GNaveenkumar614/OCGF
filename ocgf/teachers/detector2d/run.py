@@ -27,10 +27,14 @@ def kitti_object_items(image_dir) -> list[tuple[str, Path]]:
 
 
 def kitti360_frames(seq, every_m: float = 2.5) -> np.ndarray:
-    """Usable frames of a prepared drive, one every every_m metres among the stored ones."""
+    """Usable frames of a prepared drive: one every every_m metres among the stored ones, plus every frame sampled
+    every 5 m (the student's frames). Both picks are greedy along the odometer, so on a drive that stores every frame
+    (drive 0000) a 5 m pick is not always a 2.5 m pick; the union never leaves a student frame without detections."""
     index = seq.index
     stored = index["usable"] & index.get("kept", np.ones(len(index["frame"]), dtype=bool))
-    return index["frame"][sample_every(index["odometer_m"], stored, every_m)]
+    student = index.get("sample_5m", np.zeros(len(index["frame"]), dtype=bool))
+    pick = sample_every(index["odometer_m"], stored, every_m) | (stored & student)
+    return index["frame"][pick]
 
 
 def prefetched_batches(items, load, batch_size: int, workers: int = 4):

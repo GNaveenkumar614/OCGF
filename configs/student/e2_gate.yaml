@@ -1,0 +1,13 @@
+# E2 gate arm (OCGF): camera and LiDAR fused per cell by the learned gate, which sees the reliability channels Q and the
+# object channels; O_B also goes to the decoder; boxes as occluders and box-aware targets (as the E2 concat arm,
+# e1_objects, which concatenates instead of gating).
+base: base.yaml
+model:
+  mode: ocgf
+  gate: learned
+  gate_q: true
+  gate_objects: true
+objects:
+  inputs: true
+  occluders: true
+  targets: true

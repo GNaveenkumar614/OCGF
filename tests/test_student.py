@@ -81,7 +81,9 @@ def synthetic_sample(grid_shape=(16, 16), hw=(56, 112), n_points=300, seed=0):
          "pt_feats": torch.from_numpy(rng.normal(size=(n_points, 10)).astype(np.float32)),
          "pt_cell": torch.from_numpy(rng.integers(0, nx * ny, n_points)),
          "road_t": torch.from_numpy(road), "unk_t": torch.from_numpy((rng.uniform(size=(nx, ny)) < 0.5).astype(np.float32)),
-         "occ_t": torch.from_numpy(occ), "frame": torch.tensor(seed)}
+         "occ_t": torch.from_numpy(occ), "frame": torch.tensor(seed),
+         "Q_geo": torch.from_numpy(rng.uniform(size=(6, nx, ny)).astype(np.float32)),
+         "valid_L": torch.from_numpy(rng.uniform(size=(nx, ny)) < 0.8)}
     return s
 
 
@@ -104,7 +106,8 @@ def small_model(mode):
 def test_forward_shapes_per_mode(mode):
     batch = collate([synthetic_sample(seed=0), synthetic_sample(seed=1)])
     out = small_model(mode).eval()(batch)
-    assert set(out) == set(HEADS) and all(v.shape == (2, 16, 16) and torch.isfinite(v).all() for v in out.values())
+    assert set(HEADS) <= set(out)
+    assert all(out[h].shape == (2, 16, 16) and torch.isfinite(out[h]).all() for h in HEADS)
 
 
 def test_the_camera_only_baseline_needs_no_lidar_input():

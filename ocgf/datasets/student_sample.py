@@ -12,6 +12,16 @@ coordinates serve the tokens and the stride-8 map. Two versions:
   grid_uv_flat  at the calibrated plane: flat-plane IPM, the camera-only baseline E0a (no LiDAR) and ablation A2
 Cells whose ground point falls outside the real image rows (or behind the camera) get -2: outside, sampled as zero.
 
+Reliability ("Q_geo" [6, nx, ny], "valid_L" [nx, ny]): the geometric reliability channels of the plan's Q, from the
+same scan: log(1 + points in the cell), range / 50 m, ground reliability r_g, ground returns M_L, camera shadow, camera
+validity M_C (heuristic proxies until calibrated). The model adds the camera's own road-score entropy H_cam and the
+object confidence q_obj. valid_L marks where the LiDAR features mean something: the cell is in the LiDAR's line of sight
+or holds points. (Not M_L: ground returns are ~0.4 m apart at 10 m, so most visible far cells have none, and an
+obstacle cell has none at all.)
+
+Objects ("O_B" [9, nx, ny], with objects given): ocgf.datasets.objects.object_channels, from the MTrans boxes of the
+frame; the original camera is used, because the detector's 2D boxes are in the original image.
+
 LiDAR points ("pt_feats" [N, 10], "pt_cell" [N]): per point x/50, y/20, z, intensity, height above z_g, offset to the
 cell centre (x, y, in cells), offset to the mean of the cell's points (x, y, z); the flat cell index ix * ny + iy.
 Points outside the grid are dropped.
@@ -23,8 +33,10 @@ import numpy as np
 from ..geometry.bev_grid import BEVGrid
 from ..geometry.ground import plane_z
 from ..geometry.projection import project
+from .objects import ObjectConfig, object_channels
 
 IMAGE_W, IMAGE_H = 1400, 392
+Q_GEO = ("log_points", "range", "r_g", "M_L", "shadow_cam", "M_C")
 POINT_FEATURES = 10
 OUTSIDE = -2.0
 
@@ -68,17 +80,29 @@ def point_features(points, z_g: np.ndarray, grid: BEVGrid):
     return f.astype(np.float32), cell.astype(np.int64)
 
 
+def reliability(record: dict, grid: BEVGrid, camera_valid: np.ndarray):
+    """(Q_geo [6, nx, ny] float32, valid_L [nx, ny] bool) from a frame's BEV inputs (see the module docstring)."""
+    xs, ys = grid.center_grid()
+    q = np.stack([np.log1p(record["n_pts"]), np.hypot(xs, ys) / 50.0, record["r_g"], record["M_L"],
+                  record["shadow_cam"], camera_valid]).astype(np.float32)
+    return q, (record["vis_lidar"] | (record["n_pts"] > 0))
+
+
 def build_sample(image: np.ndarray, points, camera, record: dict, grid: BEVGrid = BEVGrid(),
-                 plane=(0.0, 0.0, -1.73)) -> dict:
+                 plane=(0.0, 0.0, -1.73), objects=None, obj_cfg: ObjectConfig = ObjectConfig()) -> dict:
     """The student's sample for one frame. record: ocgf.training.targets.load_record() of the same frame (BEV inputs
-    and, for training frames, targets)."""
+    and, for training frames, targets); objects: its FrameObjects, for models with object channels."""
     img, cam, rows = prepare_image(image, camera)
     grid_uv, in_view = cell_projection(cam, record["z_g"], grid, rows)
     xs, ys = grid.center_grid()
     grid_uv_flat, fov_flat = cell_projection(cam, plane_z(plane, xs, ys), grid, rows)
     feats, cell = point_features(points, record["z_g"], grid)
-    sample = {"image": img, "grid_uv": grid_uv, "M_C": record["M_C"] & in_view, "grid_uv_flat": grid_uv_flat,
-              "fov_flat": fov_flat, "pt_feats": feats, "pt_cell": cell}
+    m_c = record["M_C"] & in_view
+    q_geo, valid_l = reliability(record, grid, m_c)
+    sample = {"image": img, "grid_uv": grid_uv, "M_C": m_c, "grid_uv_flat": grid_uv_flat, "fov_flat": fov_flat,
+              "pt_feats": feats, "pt_cell": cell, "Q_geo": q_geo, "valid_L": valid_l}
+    if objects is not None:
+        sample["O_B"] = object_channels(objects, record["z_g"], camera, grid, obj_cfg)
     for key in ("road_t", "unk_t", "occ_t", "M_L", "vis_lidar", "r_g", "n_pts", "n_above"):
         if key in record:
             sample[key] = record[key]

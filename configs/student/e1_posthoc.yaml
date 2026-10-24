@@ -1,0 +1,7 @@
+# E1 baseline arm: simple fusion without object inputs, trained on the same box-aware occupancy targets as the object
+# arm; evaluated with --post-hoc-boxes (detected boxes subtracted from the free space after prediction).
+base: base.yaml
+model:
+  mode: concat
+objects:
+  targets: true

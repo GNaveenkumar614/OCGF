@@ -11,8 +11,13 @@ calibration: its BEV inputs are recomputed from the scan, as at inference. The g
 Writes <out>/metrics.json (micro-averaged metrics, the checkpoint's epoch, the run's config), frames.jsonl (per-frame
 values, for dispersion and failure cases), qa/<frame>.png and, with --save-preds, preds/<frame>.npz (float16 p_road,
 p_occ, p_unk).
+
+Objects: a run whose config uses object inputs or box occluders reads the drive's MTrans object file (--objects), the
+same detections it would have at inference. --post-hoc-boxes is the E1 baseline arm: after prediction, every cell
+inside a detected 3D box (the boxes the object models receive) is set occupied, so it is never called free.
 """
 import argparse
+import dataclasses
 import json
 import time
 from pathlib import Path
@@ -21,15 +26,17 @@ import numpy as np
 import torch
 from matplotlib.figure import Figure
 
-from ocgf.datasets.bev_inputs import BEVInputConfig
 from ocgf.datasets.kitti360 import Kitti360Sequence, stage_drive
-from ocgf.datasets.locate import describe_prepared, find_outputs, prepared_drive
+from ocgf.datasets.locate import describe_prepared, find_object_file, find_outputs, prepared_drive
+from ocgf.datasets.objects import FrameObjects, any_footprints, read_object_file
 from ocgf.datasets.splits import from_ranges
+from ocgf.evaluation.gate_log import GateLog
 from ocgf.evaluation.gt_builder import load_layers
 from ocgf.evaluation.metrics import Evaluator, MetricConfig, gt_masks
 from ocgf.geometry.bev_grid import BEVGrid
-from ocgf.models.student import Student, StudentConfig
+from ocgf.models.student import HEADS, Student
 from ocgf.training.data import ScanFrames, collate, to_device
+from ocgf.training.experiment import resolve
 from ocgf.training.train import load_trainable_state
 from ocgf.utils.provenance import write_manifest
 
@@ -100,27 +107,36 @@ def main(argv=None):
     p.add_argument("--save-preds", action="store_true")
     p.add_argument("--stage-dir", type=Path)
     p.add_argument("--threads", type=int, default=32)
+    p.add_argument("--objects", type=Path, help="where to find <sequence>.jsonl MTrans object files")
+    p.add_argument("--post-hoc-boxes", action="store_true",
+                   help="E1 baseline: cells inside detected 3D boxes are set occupied after prediction")
     args = p.parse_args(argv)
 
     ckpt = torch.load(args.run / "ckpt" / "last.pt", map_location="cpu", weights_only=False)
     cfg = ckpt["config"]
-    model_cfg = dict(cfg["model"], **({"backbone": args.backbone} if args.backbone else {}))
-    model = Student(StudentConfig.from_dict(model_cfg))
+    res = resolve(cfg)
+    model_cfg = dataclasses.replace(res.model, **({"backbone": args.backbone} if args.backbone else {}))
+    model = Student(model_cfg)
     load_trainable_state(model, ckpt["model"])
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     model.to(device).eval()
-    in_cfg = BEVInputConfig.from_dict(cfg["targets_config"].get("bev_inputs"))
+    in_cfg = res.inputs
+    needs_objects = res.model.objects or res.inputs.box_occluders or args.post_hoc_boxes
+    if needs_objects and args.objects is None:
+        raise SystemExit("this run (or --post-hoc-boxes) uses MTrans objects: pass --objects")
     grid, mcfg = BEVGrid(), MetricConfig()
     split = json.loads(args.split.read_text())
     out = args.out or args.run / f"eval_{args.part}"
     out.mkdir(parents=True, exist_ok=True)
-    print(f"run {args.run}: {model_cfg['mode']}, checkpoint after epoch {ckpt['epoch']} of {ckpt['epochs']}", flush=True)
+    print(f"run {args.run}: {model_cfg.mode}, objects {res.switches}, checkpoint after epoch {ckpt['epoch']} of "
+          f"{ckpt['epochs']}" + ("; post-hoc box subtraction" if args.post_hoc_boxes else ""), flush=True)
 
     seqs = ([Kitti360Sequence(args.dataset_map)] if args.dataset_map else
             [Kitti360Sequence(sequence=s, components=prepared_drive(args.input_root, s)) for s in args.sequence])
     for s in (args.sequence or []) if args.input_root else []:
         print(describe_prepared(args.input_root, s), flush=True)
-    ev, rows, frames_info, t0 = Evaluator(grid, mcfg), [], {}, time.time()
+    ev, rows, frames_info, object_files, t0 = Evaluator(grid, mcfg), [], {}, {}, time.time()
+    gate_log = GateLog() if model_cfg.mode == "ocgf" else None
     for seq in seqs:
         gt_dir = find_gt_dir(args.eval_gt, seq.sequence)
         available = np.array(sorted(int(f.stem) for f in gt_dir.glob("*.npz")), np.int64)
@@ -128,19 +144,35 @@ def main(argv=None):
         frames_info[seq.sequence] = len(frames)
         if not frames:
             continue
+        objects = None
+        if needs_objects:
+            path = find_object_file(args.objects, seq.sequence)
+            if path is None:
+                raise SystemExit(f"no MTrans object file for {seq.sequence} under {args.objects}")
+            objects, object_files[seq.sequence] = read_object_file(path, res.objects.min_score), str(path)
         if args.stage_dir:
             keep = {k: v for k, v in seq.paths.items() if k != "semantics2d"}
             seq = Kitti360Sequence(sequence=seq.sequence,
                                    components=stage_drive(keep, frames, args.stage_dir / seq.sequence, args.threads))
         qa = set(np.array(frames)[np.linspace(0, len(frames) - 1, min(args.qa, len(frames))).astype(int)].tolist())
-        loader = torch.utils.data.DataLoader(ScanFrames(seq, frames, grid, in_cfg), batch_size=args.batch_size,
-                                             num_workers=args.workers, collate_fn=collate)
+        data = ScanFrames(seq, frames, grid, in_cfg, objects, res.objects, object_inputs=res.model.objects)
+        loader = torch.utils.data.DataLoader(data, batch_size=args.batch_size, num_workers=args.workers,
+                                             collate_fn=collate)
         with torch.no_grad():
             for batch in loader:
-                logits = model(to_device(batch, device))
-                probs = {k: torch.sigmoid(v.float()).cpu().numpy() for k, v in logits.items()}
+                pred = model(to_device(batch, device))
+                probs = {k: torch.sigmoid(pred[k].float()).cpu().numpy() for k in HEADS}
+                if gate_log is not None:
+                    w_c = pred["gate_w"][:, 0].float().cpu().numpy()
+                    q = pred["Q"].float().cpu().numpy()
+                    v_c, v_l = batch["M_C"].numpy(), batch["valid_L"].numpy()
+                    for i in range(len(w_c)):
+                        gate_log.add(w_c[i], q[i], v_c[i], v_l[i])
                 for i, f in enumerate(batch["frame"].tolist()):
                     p_i = {k: v[i] for k, v in probs.items()}
+                    if args.post_hoc_boxes:
+                        boxes = any_footprints(objects.get(f, FrameObjects.empty()), grid)
+                        p_i["occ"] = np.where(boxes, 1.0, p_i["occ"])
                     layers = load_layers(gt_dir / f"{f:010d}.npz")
                     fr = ev.add(p_i, layers)
                     rows.append({"fid": seq.fid(f), **{f"{r}/{k}": v for r, d in fr.items() for k, v in d.items()}})
@@ -159,9 +191,11 @@ def main(argv=None):
 
     (out / "frames.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = ev.result()
-    write_manifest(out / "metrics.json", kind="student_eval", run=str(args.run), mode=model_cfg["mode"],
+    write_manifest(out / "metrics.json", kind="student_eval", run=str(args.run), mode=model_cfg.mode,
+                   objects=res.switches, post_hoc_boxes=args.post_hoc_boxes, object_files=object_files,
                    checkpoint_epoch=int(ckpt["epoch"]), epochs=int(ckpt["epochs"]), split=split.get("name"),
-                   part=args.part, frames=frames_info, run_config=cfg, metrics=result)
+                   part=args.part, frames=frames_info, run_config=cfg, metrics=result,
+                   gate=gate_log.result() if gate_log is not None else None)
     print(f"\n{'region':>20} {'ffr_pred':>9} {'ffr_hazard':>10} {'free IoU':>9} {'free P':>7} {'free R':>7}")
     for name, r in result["regions"].items():
         fr = r["free_road"]
@@ -169,6 +203,12 @@ def main(argv=None):
         print(f"{name:>20} {fmt(r['ffr_pred']):>9} {fmt(r['ffr_hazard']):>10} {fmt(fr['iou']):>9} "
               f"{fmt(fr['precision']):>7} {fmt(fr['recall']):>7}")
     print(f"calibration ECE (p_free vs free): {result['calibration']['ece']:.4f}")
+    if gate_log is not None:
+        g = gate_log.result()
+        print(f"gate: mean w_C {g['mean_w_C']} over {g['cells']['both_valid']:,} cells where both sensors are valid")
+        for c in ("H_cam", "range", "log_points", "r_g"):
+            print(f"  w_C by {c}: " + ", ".join(f"{b['lo']:g}-{b['hi']:g}: {b['mean_w_C']}" for b in g["by_channel"][c]
+                                               if b["cells"]))
     print("per class, share of box cells called free: " +
           ", ".join(f"{k} {fmt(v['called_free'])} ({v['cells']} cells)" for k, v in result["classes"].items()))
 

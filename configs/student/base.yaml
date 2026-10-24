@@ -6,10 +6,15 @@ model:
   mode: concat                        # camera_ipm (E0a) | camera | lidar (E0b) | concat (E0c)
   channels: 64
   backbone: dinov2_vits14_reg         # frozen, self-supervised (Apache-2.0); "stub" for CPU smoke runs
+objects:                              # how MTrans objects enter (see ocgf/training/experiment.py)
+  inputs: false                       # object channels O_B into the model
+  occluders: false                    # box tops occlude in the student's viewshed (A3 turns this off)
+  targets: false                      # strict boxes as occupancy pseudo-labels
 loss:
   road: 1.0
   occ: 1.0
   unk: 0.5
+  aux: 0.2                            # auxiliary road heads on F_C / F_L (H_cam comes from the camera one)
 train:
   epochs: 30                          # placeholder: fix the budget after the first timed run (plan: P1)
   batch_size: 4

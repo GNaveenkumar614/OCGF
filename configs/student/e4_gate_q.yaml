@@ -1,0 +1,6 @@
+# E4 learned gate from the features and the reliability channels Q (confidence/validity-aware fusion). No objects.
+base: base.yaml
+model:
+  mode: ocgf
+  gate: learned
+  gate_q: true

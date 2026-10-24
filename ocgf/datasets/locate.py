@@ -135,3 +135,26 @@ def find_runs(root, name: str) -> list[Path]:
             found.append(here)
             dirnames[:] = []
     return found
+
+
+def find_object_file(root, sequence: str) -> Path | None:
+    """The MTrans object file of a sequence under root: <sequence>.jsonl beside a <sequence>.manifest.json written by
+    the MTrans teacher (scripts/run_mtrans.py). If several are attached, the most recent manifest wins."""
+    found = []
+    for here, _, filenames in _pruned_walk(root):
+        if f"{sequence}.jsonl" in filenames and f"{sequence}.manifest.json" in filenames:
+            try:
+                manifest = json.loads((here / f"{sequence}.manifest.json").read_text())
+            except (OSError, ValueError):
+                continue
+            if manifest.get("teacher") == "mtrans":
+                found.append((manifest.get("created_utc", ""), here / f"{sequence}.jsonl"))
+    return max(found)[1] if found else None
+
+
+def find_detections(root, sequence: str) -> Path | None:
+    """The 2D detector's file for a KITTI-360 sequence under root: kitti360/<sequence>.txt (notebook 02's output)."""
+    for here, _, filenames in _pruned_walk(root):
+        if here.name == "kitti360" and f"{sequence}.txt" in filenames:
+            return here / f"{sequence}.txt"
+    return None
