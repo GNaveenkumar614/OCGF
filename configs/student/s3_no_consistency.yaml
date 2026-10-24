@@ -1,0 +1,5 @@
+# S3: the main model (E2 gate arm) without the self-supervised consistency terms (cross-modal and temporal).
+base: e2_gate.yaml
+loss:
+  cross: 0.0
+  temporal: 0.0

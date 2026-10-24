@@ -1,0 +1,5 @@
+# A2: the main model (E2 gate arm) with camera features sampled at the calibrated flat plane instead of the scan's
+# ground surface (the LiDAR is still used elsewhere).
+base: e2_gate.yaml
+model:
+  lifting: flat

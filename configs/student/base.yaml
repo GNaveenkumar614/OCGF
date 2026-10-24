@@ -15,6 +15,10 @@ loss:
   occ: 1.0
   unk: 0.5
   aux: 0.2                            # auxiliary road heads on F_C / F_L (H_cam comes from the camera one)
+  boundary: 0.5                       # road BCE weighted near the road target's 0.5 contour
+  boundary_sigma: 0.5                 # m
+  cross: 0.1                          # cross-modal consistency of the auxiliary heads (self-supervised; S3 turns off)
+  temporal: 0.1                       # temporal consistency with the previous 5 m frame (self-supervised; S3 turns off)
 train:
   epochs: 30                          # placeholder: fix the budget after the first timed run (plan: P1)
   batch_size: 4

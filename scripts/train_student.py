@@ -32,7 +32,7 @@ from ocgf.datasets.objects import read_object_file
 from ocgf.datasets.splits import from_ranges
 from ocgf.geometry.bev_grid import BEVGrid
 from ocgf.models.student import Student
-from ocgf.training.data import StudentFrames
+from ocgf.training.data import StudentFrames, previous_frames
 from ocgf.training.experiment import load_config, resolve
 from ocgf.training.targets import build_targets, read_road_label, save_record
 from ocgf.training.train import train
@@ -182,8 +182,12 @@ def main(argv=None):
         model_objects = objects if res.model.objects else None
         for part, sets in (("train", train_sets), ("val", val_sets)):
             if len(parts[part]):
+                prev = previous_frames(seq, parts[part], parts[part]) if res.loss.temporal else None
+                if prev is not None:
+                    log(f"{seq.sequence} {part}: {len(prev)} of {len(parts[part])} frames paired with an earlier frame "
+                        f"(temporal consistency)")
                 sets.append(StudentFrames(seq, parts[part], rec_dir, plane=plane, objects=model_objects,
-                                          obj_cfg=res.objects))
+                                          obj_cfg=res.objects, prev=prev))
     log(f"frames per drive: {frames_info}")
     if not train_sets:
         sys.exit("no training frames: check --split, --road-labels and --sequence")

@@ -1,0 +1,4 @@
+# A1: the main model (E2 gate arm) with camera features sampled at the LiDAR points' pixels, averaged per cell.
+base: e2_gate.yaml
+model:
+  lifting: lidar_anchored

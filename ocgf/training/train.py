@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .data import collate, to_device
+from .data import collate, previous_inputs, to_device
 from .losses import LossWeights, student_loss
 
 FROZEN_PREFIX = "camera.backbone."
@@ -88,6 +88,15 @@ def save_checkpoint(path: Path, **state) -> None:
     os.replace(tmp, path)                                    # a killed session never leaves a half-written file
 
 
+def previous_outputs(model, batch: dict, amp: bool, device):
+    """The model's outputs on the batch's paired earlier frames (temporal consistency), without gradients; None when
+    the batch has no pairs."""
+    if "has_prev" not in batch or not bool(batch["has_prev"].any()):
+        return None
+    with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
+        return model(previous_inputs(batch))
+
+
 def _mean(sums: dict, n: int) -> dict:
     return {k: round(v / max(n, 1), 5) for k, v in sums.items()}
 
@@ -100,7 +109,7 @@ def evaluate_loss(model, loader, device, weights: LossWeights, amp: bool) -> dic
         batch = to_device(batch, device)
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
             out = model(batch)
-        total, parts = student_loss(out, batch, weights)
+        total, parts = student_loss(out, batch, weights, previous_outputs(model, batch, amp, device))
         for k, v in {"loss": total, **parts}.items():
             sums[k] = sums.get(k, 0.0) + float(v)
         n += 1
@@ -160,7 +169,7 @@ def train(model, train_set, val_set, cfg: TrainConfig, weights: LossWeights, out
             optim.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
                 out = model(batch)
-            loss, parts = student_loss(out, batch, weights)
+            loss, parts = student_loss(out, batch, weights, previous_outputs(model, batch, amp, device))
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"non-finite loss at epoch {epoch} step {step}: "
                                          f"{ {k: float(v) for k, v in parts.items()} }")

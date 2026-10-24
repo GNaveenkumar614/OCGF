@@ -19,16 +19,21 @@ object confidence q_obj. valid_L marks where the LiDAR features mean something: 
 or holds points. (Not M_L: ground returns are ~0.4 m apart at 10 m, so most visible far cells have none, and an
 obstacle cell has none at all.)
 
+Road boundary ("road_bd" [nx, ny], training frames): distance (m) from each cell to the nearest cell on the road
+target's 0.5 contour (1000 where the frame has no contour), for the boundary-weighted road loss.
+
 Objects ("O_B" [9, nx, ny], with objects given): ocgf.datasets.objects.object_channels, from the MTrans boxes of the
 frame; the original camera is used, because the detector's 2D boxes are in the original image.
 
-LiDAR points ("pt_feats" [N, 10], "pt_cell" [N]): per point x/50, y/20, z, intensity, height above z_g, offset to the
-cell centre (x, y, in cells), offset to the mean of the cell's points (x, y, z); the flat cell index ix * ny + iy.
-Points outside the grid are dropped.
+LiDAR points ("pt_feats" [N, 10], "pt_cell" [N], "pt_uv" [N, 2]): per point x/50, y/20, z, intensity, height above z_g, offset to the
+cell centre (x, y, in cells), offset to the mean of the cell's points (x, y, z); the flat cell index ix * ny + iy;
+and each point's grid_sample coordinates in the image (OUTSIDE when it is not seen), for the LiDAR-anchored camera
+lifting of ablation A1. Points outside the grid are dropped.
 """
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import binary_dilation, distance_transform_edt
 
 from ..geometry.bev_grid import BEVGrid
 from ..geometry.ground import plane_z
@@ -80,12 +85,33 @@ def point_features(points, z_g: np.ndarray, grid: BEVGrid):
     return f.astype(np.float32), cell.astype(np.int64)
 
 
+def point_projection(points, camera, real_rows: int) -> np.ndarray:
+    """[N, 2] float32 grid_sample coordinates of the points in the image (OUTSIDE where not seen)."""
+    uv, _, ok = project(np.asarray(points, np.float64)[:, :3], camera)
+    ok &= np.nan_to_num(uv[:, 1], nan=np.inf) < real_rows - 0.5
+    g = np.full((len(uv), 2), OUTSIDE, np.float32)
+    g[ok, 0] = 2 * (uv[ok, 0] + 0.5) / camera.width - 1
+    g[ok, 1] = 2 * (uv[ok, 1] + 0.5) / camera.height - 1
+    return g
+
+
 def reliability(record: dict, grid: BEVGrid, camera_valid: np.ndarray):
     """(Q_geo [6, nx, ny] float32, valid_L [nx, ny] bool) from a frame's BEV inputs (see the module docstring)."""
     xs, ys = grid.center_grid()
     q = np.stack([np.log1p(record["n_pts"]), np.hypot(xs, ys) / 50.0, record["r_g"], record["M_L"],
                   record["shadow_cam"], camera_valid]).astype(np.float32)
     return q, (record["vis_lidar"] | (record["n_pts"] > 0))
+
+
+def boundary_distance(road_t: np.ndarray, grid: BEVGrid) -> np.ndarray:
+    """[nx, ny] float32: distance (m) to the nearest cell on the 0.5 contour of road_t (NaN cells are neither side)."""
+    finite = np.isfinite(road_t)
+    inside = finite & (np.nan_to_num(road_t) >= 0.5)
+    outside = finite & ~inside
+    edge = (inside & binary_dilation(outside)) | (outside & binary_dilation(inside))
+    if not edge.any():
+        return np.full(grid.shape, 1000.0, np.float32)
+    return (distance_transform_edt(~edge) * grid.res).astype(np.float32)
 
 
 def build_sample(image: np.ndarray, points, camera, record: dict, grid: BEVGrid = BEVGrid(),
@@ -97,13 +123,17 @@ def build_sample(image: np.ndarray, points, camera, record: dict, grid: BEVGrid 
     xs, ys = grid.center_grid()
     grid_uv_flat, fov_flat = cell_projection(cam, plane_z(plane, xs, ys), grid, rows)
     feats, cell = point_features(points, record["z_g"], grid)
+    pts = np.asarray(points, np.float64)
+    pt_uv = point_projection(pts[grid.inside(pts[:, 0], pts[:, 1])], cam, rows)
     m_c = record["M_C"] & in_view
     q_geo, valid_l = reliability(record, grid, m_c)
     sample = {"image": img, "grid_uv": grid_uv, "M_C": m_c, "grid_uv_flat": grid_uv_flat, "fov_flat": fov_flat,
-              "pt_feats": feats, "pt_cell": cell, "Q_geo": q_geo, "valid_L": valid_l}
+              "pt_feats": feats, "pt_cell": cell, "pt_uv": pt_uv, "Q_geo": q_geo, "valid_L": valid_l}
     if objects is not None:
         sample["O_B"] = object_channels(objects, record["z_g"], camera, grid, obj_cfg)
     for key in ("road_t", "unk_t", "occ_t", "M_L", "vis_lidar", "r_g", "n_pts", "n_above"):
         if key in record:
             sample[key] = record[key]
+    if "road_t" in record:
+        sample["road_bd"] = boundary_distance(record["road_t"], grid)
     return sample

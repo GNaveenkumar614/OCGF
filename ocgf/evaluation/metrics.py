@@ -13,7 +13,7 @@ Free road: IoU, precision, recall of D_free against free (and of the road head a
 against occupied | obstacle, on cells with ground truth. Unknown: p_unk against unknown. Per class (box classes of
 the ground truth): cells, occupancy recall, share called free. Calibration of p_free against free: ECE and the
 reliability bins; risk-coverage: ffr_pred of the cells above each confidence level against the share of the grid they
-cover.
+cover, and its area (AURC, lower is better).
 
 Regions: the whole grid, distance bands from the LiDAR, and the near-object band: cells within near_m of a box of
 the four object classes (car, large vehicle, pedestrian, cyclist), the box cells included. Buildings, walls and
@@ -156,4 +156,7 @@ class Evaluator:
         out["risk_coverage"] = [{"min_confidence": round(1 - (k + 1) / self.cfg.rc_bins, 4),
                                  "coverage": round(float(cells[k] / total), 5), "ffr_pred": _ratio(hazard[k], cells[k])}
                                 for k in range(self.cfg.rc_bins)]
+        cov = np.concatenate([[0.0], cells / total])                # area under risk (ffr_pred) over coverage
+        risk = np.concatenate([[0.0], np.where(cells > 0, hazard / np.maximum(cells, 1), 0.0)])
+        out["aurc"] = round(float(np.sum(np.diff(cov) * risk[1:])), 5)
         return out

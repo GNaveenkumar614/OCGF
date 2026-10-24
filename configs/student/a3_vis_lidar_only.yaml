@@ -1,0 +1,4 @@
+# A3: the main model (E2 gate arm) with visibility from the LiDAR points only (no box occluders in the viewshed).
+base: e2_gate.yaml
+objects:
+  occluders: false

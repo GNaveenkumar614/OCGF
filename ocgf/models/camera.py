@@ -93,3 +93,26 @@ def lift(features, grid_uv, valid):
     bev = F.grid_sample(features, grid_uv.to(features.dtype), mode="bilinear", padding_mode="zeros",
                         align_corners=False)
     return bev * valid.unsqueeze(1).to(bev.dtype)
+
+
+def lift_at_points(features, pt_uv, pt_cell, batch_size: int, grid_shape):
+    """LiDAR-anchored lifting (ablation A1): the image features at each LiDAR point's pixel, averaged per BEV cell.
+    features [B, C, h, w]; pt_uv [N, 2] grid_sample coordinates (outside the image: -2); pt_cell [N] flat cell index
+    over the batch. Returns (BEV features [B, C, nx, ny], valid [B, nx, ny]: the cell holds a seen point)."""
+    nx, ny = grid_shape
+    c = features.shape[1]
+    seen = (pt_uv.abs() <= 1).all(dim=1)
+    sums = features.new_zeros(batch_size * nx * ny, c, dtype=torch.float32)
+    counts = features.new_zeros(batch_size * nx * ny, dtype=torch.float32)
+    per_sample = nx * ny
+    for b in range(batch_size):
+        sel = seen & (pt_cell // per_sample == b)
+        if not sel.any():
+            continue
+        f = F.grid_sample(features[b:b + 1].float(), pt_uv[sel][None, None].float(), mode="bilinear",
+                          padding_mode="zeros", align_corners=False)[0, :, 0].T            # [n, C]
+        sums.index_add_(0, pt_cell[sel], f)
+        counts.index_add_(0, pt_cell[sel], torch.ones_like(f[:, 0]))
+    bev = (sums / counts.clamp(min=1)[:, None]).view(batch_size, nx, ny, c).permute(0, 3, 1, 2).contiguous()
+    return bev.to(features.dtype), (counts > 0).view(batch_size, nx, ny)
+

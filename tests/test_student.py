@@ -80,6 +80,7 @@ def synthetic_sample(grid_shape=(16, 16), hw=(56, 112), n_points=300, seed=0):
          "grid_uv_flat": torch.from_numpy(g), "fov_flat": torch.from_numpy(rng.uniform(size=(nx, ny)) < 0.7),
          "pt_feats": torch.from_numpy(rng.normal(size=(n_points, 10)).astype(np.float32)),
          "pt_cell": torch.from_numpy(rng.integers(0, nx * ny, n_points)),
+         "pt_uv": torch.from_numpy(rng.uniform(-1.2, 1.2, (n_points, 2)).astype(np.float32)),
          "road_t": torch.from_numpy(road), "unk_t": torch.from_numpy((rng.uniform(size=(nx, ny)) < 0.5).astype(np.float32)),
          "occ_t": torch.from_numpy(occ), "frame": torch.tensor(seed),
          "Q_geo": torch.from_numpy(rng.uniform(size=(6, nx, ny)).astype(np.float32)),
@@ -158,3 +159,27 @@ def test_training_smoke_checkpoint_and_resume(tmp_path):
     assert len((out / "metrics.jsonl").read_text().splitlines()) == 2
     import json
     assert json.loads((out / "ckpt" / "progress.json").read_text()) == {"epoch": 1, "epochs": 2}
+
+
+def test_lidar_anchored_lifting_averages_the_features_at_each_cells_points():
+    from ocgf.models.camera import lift_at_points
+    h, w = 8, 16
+    jj, ii = np.meshgrid(np.arange(w), np.arange(h))
+    feat = torch.tensor(np.stack([jj, ii]), dtype=torch.float32)[None].repeat(2, 1, 1, 1)   # channel 0: column
+    def at(col, row):                                     # grid_sample coordinates of a feature cell's centre
+        return [2 * (col + 0.5) / w - 1, 2 * (row + 0.5) / h - 1]
+    pt_uv = torch.tensor([at(3, 2), at(5, 2), at(9, 4), [-2.0, -2.0]])
+    pt_cell = torch.tensor([7, 7, 4 + 16, 9])            # two points in cell 7 of sample 0, one in cell 4 of sample 1
+    bev, valid = lift_at_points(feat, pt_uv, pt_cell, 2, (4, 4))
+    assert bev[0, 0].flatten()[7] == pytest.approx(4.0) and bev[1, 0].flatten()[4] == pytest.approx(9.0)
+    assert valid.sum() == 2 and not valid[0].flatten()[9]                          # the unseen point gives nothing
+
+
+@pytest.mark.parametrize("lifting", ["ground", "flat", "lidar_anchored"])
+def test_each_lifting_runs_in_the_gated_model(lifting):
+    batch = collate([synthetic_sample(seed=0), synthetic_sample(seed=1)])
+    model = Student(StudentConfig(mode="ocgf", channels=8, backbone="stub", grid_shape=(16, 16), lifting=lifting))
+    out = model.eval()(batch)
+    assert out["road"].shape == (2, 16, 16)
+    assert (out["gate_w"][:, 0][~out["valid_camera"]] == 0).all()
+

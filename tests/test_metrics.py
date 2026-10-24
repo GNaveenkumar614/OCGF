@@ -97,3 +97,12 @@ def test_risk_coverage_ends_at_full_coverage_and_config_is_reported():
     assert rc[-1]["coverage"] == 1.0 and all(a["coverage"] <= b["coverage"] for a, b in zip(rc, rc[1:]))
     assert "near_object_1m" in res["regions"] and res["config"]["near_m"] == 1.0
     assert sum(b["count"] for b in res["calibration"]["bins"]) == GRID.shape[0] * GRID.shape[1]
+
+
+def test_aurc_is_lower_for_a_predictor_that_ranks_hazards_last():
+    layers = street_layers()
+    good, rand = Evaluator(), Evaluator()
+    good.add(perfect(layers), layers)
+    rng = np.random.default_rng(2)
+    rand.add({k: rng.uniform(size=GRID.shape) for k in ("road", "occ", "unk")}, layers)
+    assert 0 <= good.result()["aurc"] < rand.result()["aurc"]

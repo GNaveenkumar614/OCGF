@@ -15,6 +15,10 @@ p_occ, p_unk).
 Objects: a run whose config uses object inputs or box occluders reads the drive's MTrans object file (--objects), the
 same detections it would have at inference. --post-hoc-boxes is the E1 baseline arm: after prediction, every cell
 inside a detected 3D box (the boxes the object models receive) is set occupied, so it is never called free.
+
+Robustness (E5): --perturb applies a test-time perturbation (ocgf/evaluation/perturb.py: fewer LiDAR rings, point
+dropout, camera blur/noise/exposure/patches, box jitter/dropout); every input is recomputed from the perturbed data,
+and the post-hoc arm subtracts the same perturbed boxes.
 """
 import argparse
 import dataclasses
@@ -32,6 +36,7 @@ from ocgf.datasets.objects import FrameObjects, any_footprints, read_object_file
 from ocgf.datasets.splits import from_ranges
 from ocgf.evaluation.gate_log import GateLog
 from ocgf.evaluation.gt_builder import load_layers
+from ocgf.evaluation.perturb import parse_spec, perturb_objects, spec_name
 from ocgf.evaluation.metrics import Evaluator, MetricConfig, gt_masks
 from ocgf.geometry.bev_grid import BEVGrid
 from ocgf.models.student import HEADS, Student
@@ -110,6 +115,8 @@ def main(argv=None):
     p.add_argument("--objects", type=Path, help="where to find <sequence>.jsonl MTrans object files")
     p.add_argument("--post-hoc-boxes", action="store_true",
                    help="E1 baseline: cells inside detected 3D boxes are set occupied after prediction")
+    p.add_argument("--perturb", default="", help="E5 test-time perturbation, e.g. rings=2 or box_drop=1.0")
+    p.add_argument("--perturb-seed", type=int, default=0)
     args = p.parse_args(argv)
 
     ckpt = torch.load(args.run / "ckpt" / "last.pt", map_location="cpu", weights_only=False)
@@ -126,10 +133,12 @@ def main(argv=None):
         raise SystemExit("this run (or --post-hoc-boxes) uses MTrans objects: pass --objects")
     grid, mcfg = BEVGrid(), MetricConfig()
     split = json.loads(args.split.read_text())
-    out = args.out or args.run / f"eval_{args.part}"
+    perturb = parse_spec(args.perturb)
+    out = args.out or args.run / f"eval_{args.part}" / spec_name(args.perturb)
     out.mkdir(parents=True, exist_ok=True)
     print(f"run {args.run}: {model_cfg.mode}, objects {res.switches}, checkpoint after epoch {ckpt['epoch']} of "
-          f"{ckpt['epochs']}" + ("; post-hoc box subtraction" if args.post_hoc_boxes else ""), flush=True)
+          f"{ckpt['epochs']}" + ("; post-hoc box subtraction" if args.post_hoc_boxes else "")
+          + (f"; perturbation {args.perturb}" if args.perturb else ""), flush=True)
 
     seqs = ([Kitti360Sequence(args.dataset_map)] if args.dataset_map else
             [Kitti360Sequence(sequence=s, components=prepared_drive(args.input_root, s)) for s in args.sequence])
@@ -155,7 +164,8 @@ def main(argv=None):
             seq = Kitti360Sequence(sequence=seq.sequence,
                                    components=stage_drive(keep, frames, args.stage_dir / seq.sequence, args.threads))
         qa = set(np.array(frames)[np.linspace(0, len(frames) - 1, min(args.qa, len(frames))).astype(int)].tolist())
-        data = ScanFrames(seq, frames, grid, in_cfg, objects, res.objects, object_inputs=res.model.objects)
+        data = ScanFrames(seq, frames, grid, in_cfg, objects, res.objects, object_inputs=res.model.objects,
+                          perturb=perturb, seed=args.perturb_seed)
         loader = torch.utils.data.DataLoader(data, batch_size=args.batch_size, num_workers=args.workers,
                                              collate_fn=collate)
         with torch.no_grad():
@@ -171,7 +181,8 @@ def main(argv=None):
                 for i, f in enumerate(batch["frame"].tolist()):
                     p_i = {k: v[i] for k, v in probs.items()}
                     if args.post_hoc_boxes:
-                        boxes = any_footprints(objects.get(f, FrameObjects.empty()), grid)
+                        seen = perturb_objects(objects.get(f, FrameObjects.empty()), perturb, f, args.perturb_seed)
+                        boxes = any_footprints(seen, grid)
                         p_i["occ"] = np.where(boxes, 1.0, p_i["occ"])
                     layers = load_layers(gt_dir / f"{f:010d}.npz")
                     fr = ev.add(p_i, layers)
@@ -193,6 +204,7 @@ def main(argv=None):
     result = ev.result()
     write_manifest(out / "metrics.json", kind="student_eval", run=str(args.run), mode=model_cfg.mode,
                    objects=res.switches, post_hoc_boxes=args.post_hoc_boxes, object_files=object_files,
+                   perturbation=args.perturb, perturbation_seed=args.perturb_seed,
                    checkpoint_epoch=int(ckpt["epoch"]), epochs=int(ckpt["epochs"]), split=split.get("name"),
                    part=args.part, frames=frames_info, run_config=cfg, metrics=result,
                    gate=gate_log.result() if gate_log is not None else None)

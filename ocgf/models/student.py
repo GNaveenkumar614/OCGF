@@ -10,6 +10,11 @@ Modes (one code path, so the baselines share every other part):
 With objects, the object channels O_B (ocgf.datasets.objects, 9 channels) are concatenated to the fused features
 before the decoder (E2's concat arm, and in ocgf mode the plan's decoder input concat[F_road, O_B]).
 
+Camera lifting (modes other than camera_ipm), for the lifting ablations:
+  ground          sample at each cell's ground point from the current scan (the main configuration)
+  flat            sample at the calibrated plane, with everything else unchanged (A2)
+  lidar_anchored  sample at the LiDAR points' pixels and average per cell; cells without a seen point get none (A1)
+
 Reliability channels Q (8): the sample's Q_geo (log points, range, r_g, ground returns, camera shadow, camera
 validity), the camera road score's entropy H_cam (detached, from the camera auxiliary head) and q_obj (O_B's object
 confidence; 0 without objects). Auxiliary road heads on F_C and F_L (1x1 convs) are trained on the road target where
@@ -24,7 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .camera import CameraEncoder, lift, make_backbone
+from .camera import CameraEncoder, lift, lift_at_points, make_backbone
 from .lidar import PillarEncoder
 from .ocgf import Gate
 
@@ -33,6 +38,7 @@ N_Q_GEO = 6                      # ocgf.datasets.student_sample.Q_GEO
 Q_CHANNELS = ("log_points", "range", "r_g", "M_L", "shadow_cam", "M_C", "H_cam", "q_obj")
 
 MODES = ("camera_ipm", "camera", "lidar", "concat", "ocgf")
+LIFTINGS = ("ground", "flat", "lidar_anchored")
 HEADS = ("road", "occ", "unk")
 
 
@@ -47,6 +53,7 @@ class StudentConfig:
     gate: str = "learned"                    # ocgf mode: "learned" or "fixed" (E4)
     gate_q: bool = True                      # ocgf mode: the learned gate sees Q (E4: without)
     gate_objects: bool = True                # ocgf mode with objects: the gate sees O_B (E2)
+    lifting: str = "ground"                  # camera lifting: ground | flat (A2) | lidar_anchored (A1)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> StudentConfig:
@@ -56,6 +63,8 @@ class StudentConfig:
         cfg = cls(**d)
         if cfg.mode not in MODES:
             raise ValueError(f"mode {cfg.mode!r} is not one of {MODES}")
+        if cfg.lifting not in LIFTINGS:
+            raise ValueError(f"lifting {cfg.lifting!r} is not one of {LIFTINGS}")
         return cfg
 
     def to_dict(self) -> dict:
@@ -118,10 +127,10 @@ class Student(nn.Module):
         self.decoder = UNet(c + (N_OBJECT_CHANNELS if cfg.objects else 0), c)
         self.heads = nn.Conv2d(c, len(HEADS), 1)
 
-    def reliability(self, batch: dict, aux_camera_logits):
-        """Q [B, 8, nx, ny]: Q_geo, H_cam (detached), q_obj."""
+    def reliability(self, batch: dict, aux_camera_logits, valid_camera):
+        """Q [B, 8, nx, ny]: Q_geo, H_cam (detached, 0 where the camera is invalid), q_obj."""
         q_geo = batch["Q_geo"].float()
-        h_cam = binary_entropy(aux_camera_logits.detach())[:, None] * batch["M_C"][:, None]
+        h_cam = binary_entropy(aux_camera_logits.detach())[:, None] * valid_camera[:, None]
         q_obj = batch["O_B"][:, 4:5].float() if self.cfg.objects else torch.zeros_like(h_cam)
         return torch.cat([q_geo, h_cam, q_obj], dim=1)
 
@@ -129,22 +138,28 @@ class Student(nn.Module):
         out, feats = {}, {}
         if self.uses_camera:
             img = self.camera(batch["image"])
-            ipm = self.cfg.mode == "camera_ipm"
-            valid_c = batch["fov_flat"] if ipm else batch["M_C"]
-            feats["F_C"] = lift(img, batch["grid_uv_flat" if ipm else "grid_uv"], valid_c)
+            if self.cfg.mode == "camera_ipm":
+                valid_c = batch["fov_flat"]
+                feats["F_C"] = lift(img, batch["grid_uv_flat"], valid_c)
+            elif self.cfg.lifting == "lidar_anchored":
+                feats["F_C"], valid_c = lift_at_points(img, batch["pt_uv"], batch["pt_cell"], batch["grid_uv"].shape[0],
+                                                       self.cfg.grid_shape)
+            else:
+                valid_c = batch["M_C"]
+                feats["F_C"] = lift(img, batch["grid_uv_flat" if self.cfg.lifting == "flat" else "grid_uv"], valid_c)
             out["aux_road_camera"], out["valid_camera"] = self.aux_camera(feats["F_C"])[:, 0], valid_c
         if self.uses_lidar:
             feats["F_L"] = self.lidar(batch["pt_feats"], batch["pt_cell"], batch["grid_uv"].shape[0])
             out["aux_road_lidar"] = self.aux_lidar(feats["F_L"])[:, 0]
             out["valid_lidar"] = batch["valid_L"] if "valid_L" in batch else torch.ones_like(out["aux_road_lidar"], dtype=torch.bool)
         if self.cfg.mode == "ocgf":
-            q = self.reliability(batch, out["aux_road_camera"])
+            q = self.reliability(batch, out["aux_road_camera"], out["valid_camera"])
             extra = []
             if self.cfg.gate_q:
                 extra.append(q)
             if self.cfg.objects and self.cfg.gate_objects:
                 extra.append(batch["O_B"].float())
-            x, w = self.gate(feats["F_C"], feats["F_L"], batch["M_C"], out["valid_lidar"],
+            x, w = self.gate(feats["F_C"], feats["F_L"], out["valid_camera"], out["valid_lidar"],
                              torch.cat(extra, dim=1) if extra else None)
             out["gate_w"], out["Q"] = w, q
         else:
