@@ -20,7 +20,7 @@ from matplotlib.figure import Figure
 
 from ocgf.datasets.bev_inputs import BEVInputConfig, bev_inputs
 from ocgf.datasets.kitti360 import Kitti360Sequence, stage_drive
-from ocgf.datasets.locate import prepared_drive
+from ocgf.datasets.locate import describe_prepared, find_outputs, prepared_drive
 from ocgf.geometry.bev_grid import BEVGrid
 from ocgf.geometry.ground import plane_z
 from ocgf.geometry.projection import project
@@ -86,10 +86,12 @@ def main(argv=None):
     in_cfg, t_cfg = BEVInputConfig.from_dict(raw.get("bev_inputs")), TargetConfig.from_dict(raw.get("targets"))
     seq = (Kitti360Sequence(args.dataset_map) if args.dataset_map else
            Kitti360Sequence(sequence=args.sequence, components=prepared_drive(args.input_root, args.sequence)))
+    if args.input_root:
+        print(describe_prepared(args.input_root, args.sequence), flush=True)
     label_dir = args.road_labels / seq.sequence
     if not label_dir.is_dir():
-        hits = sorted(args.road_labels.rglob(f"{seq.sequence}/manifest.json"))     # wherever Kaggle mounted it
-        label_dir = hits[0].parent if hits else label_dir
+        hits = find_outputs(args.road_labels, seq.sequence, "teacher", "road")      # wherever Kaggle mounted it
+        label_dir = hits[0] if hits else label_dir
     frames = sorted(int(f.stem) for f in label_dir.glob("*.npz"))[: args.max_frames]
     if not frames:
         raise FileNotFoundError(f"no road labels for {seq.sequence} under {args.road_labels}")

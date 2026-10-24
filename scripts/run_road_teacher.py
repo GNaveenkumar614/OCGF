@@ -20,7 +20,7 @@ from matplotlib.figure import Figure
 from PIL import Image
 
 from ocgf.datasets.kitti360 import Kitti360Sequence, stage_drive
-from ocgf.datasets.locate import prepared_drive
+from ocgf.datasets.locate import describe_prepared, prepared_drive
 from ocgf.geometry.projection import project
 from ocgf.teachers.road.config import RoadConfig
 from ocgf.teachers.road.label import N_RINGS, audit_counts, audit_summary, label_frame, save_result
@@ -85,6 +85,8 @@ def main(argv=None):
     camera_model = cfg.camera_model if args.camera is None else args.camera
     seq = (Kitti360Sequence(args.dataset_map) if args.dataset_map else
            Kitti360Sequence(sequence=args.sequence, components=prepared_drive(args.input_root, args.sequence)))
+    if args.input_root:
+        print(describe_prepared(args.input_root, args.sequence), flush=True)
     idx = seq.index
     sel = idx["usable"] & idx.get("kept", True)
     if not args.all_frames:

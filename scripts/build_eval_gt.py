@@ -5,7 +5,8 @@
     python scripts/build_eval_gt.py --input-root /kaggle/input --sequence 2013_05_28_drive_0009_sync \
         --out /kaggle/working/eval_gt --qa 6
 
-Frames: usable frames inside a semantic window, sampled every 5 m (--all-frames: every stored usable frame).
+Frames: usable frames inside a semantic window, sampled every 5 m (--all-frames: every stored usable frame); with
+--split and --parts, only the frames in those parts of a frame-level split (starter phase: drive 0000's val and test).
 Writes <out>/<sequence>/<frame>.npz, summary.jsonl (per-frame shares), manifest.json and qa/<frame>.png.
 """
 import argparse
@@ -19,7 +20,7 @@ from matplotlib.figure import Figure
 
 from ocgf.datasets.kitti360 import Kitti360Sequence
 from ocgf.datasets.kitti360_labels import GROUND_SURFACES, LABEL_NAMES, ROAD
-from ocgf.datasets.locate import prepared_drive
+from ocgf.datasets.locate import describe_prepared, prepared_drive
 from ocgf.evaluation.gt_builder import (OCCUPIED_CLASSES, GTConfig, build_frame_gt, free_space, load_window,
                                         save_layers, settings)
 from ocgf.geometry.bev_grid import BEVGrid
@@ -100,18 +101,27 @@ def main(argv=None):
     p.add_argument("--qa", type=int, default=4, help="QA figures for this many frames")
     p.add_argument("--stage-dir", type=Path, help="copy the semantic windows here first (slow input mounts)")
     p.add_argument("--threads", type=int, default=16)
+    p.add_argument("--split", type=Path, help="frame-level split JSON (e.g. configs/splits/kitti360_d0000_dev_v1.json)")
+    p.add_argument("--parts", nargs="+", default=["val", "test"], help="with --split: the parts to build")
     args = p.parse_args(argv)
 
     if args.dataset_map:
         seq = Kitti360Sequence(args.dataset_map)
     else:
         seq = Kitti360Sequence(sequence=args.sequence, components=prepared_drive(args.input_root, args.sequence))
+        print(describe_prepared(args.input_root, args.sequence), flush=True)
     if "semantics3d" not in seq.paths:
         raise SystemExit("no accumulated 3D semantics for this drive: attach the KITTI-360 3d semantics dataset")
     idx, grid, cfg = seq.index, BEVGrid(), GTConfig()
     sel = idx["usable"] & idx.get("kept", True) & (idx["window_start"] >= 0)
     if not args.all_frames:
         sel &= idx["sample_5m"]
+    if args.split:
+        from ocgf.datasets.splits import from_ranges
+        split = json.loads(args.split.read_text())
+        if split.get("sequence") != seq.sequence or "splits" not in split:
+            raise SystemExit(f"{args.split} is not a frame-level split of {seq.sequence}")
+        sel &= np.isin(idx["frame"], np.concatenate([from_ranges(split["splits"][p]) for p in args.parts]))
     frames = idx["frame"][sel]
     windows = sorted({(int(idx["window_start"][i]), int(idx["window_end"][i])) for i in np.flatnonzero(sel)})
     out = args.out / seq.sequence

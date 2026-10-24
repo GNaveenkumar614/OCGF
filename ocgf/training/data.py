@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ..datasets.bev_inputs import BEVInputConfig, bev_inputs
 from ..datasets.student_sample import build_sample
 from ..geometry.bev_grid import BEVGrid
 from .targets import load_record
@@ -27,6 +28,27 @@ class StudentFrames(torch.utils.data.Dataset):
         s = build_sample(self.seq.image(f), self.seq.points(f), self.seq.camera, record, self.grid, self.plane)
         out = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in s.items()}
         out["image"] = out["image"].permute(2, 0, 1)                 # [3, H, W] uint8
+        out["frame"] = torch.tensor(f)
+        return out
+
+
+class ScanFrames(torch.utils.data.Dataset):
+    """Frames for inference and evaluation: the BEV inputs are computed from the scan on the fly, as at test time
+    (so a perturbed scan, E5, changes them too). No targets, no ground truth."""
+
+    def __init__(self, seq, frames, grid: BEVGrid = BEVGrid(), inputs_cfg: BEVInputConfig = BEVInputConfig()):
+        self.seq, self.frames, self.grid, self.cfg = seq, [int(f) for f in frames], grid, inputs_cfg
+
+    def __len__(self):
+        return len(self.frames)
+
+    def __getitem__(self, i):
+        f = self.frames[i]
+        points = self.seq.points(f)
+        inputs = bev_inputs(points, self.seq.camera, self.grid, self.cfg)
+        s = build_sample(self.seq.image(f), points, self.seq.camera, inputs, self.grid, self.cfg.ground.plane)
+        out = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in s.items()}
+        out["image"] = out["image"].permute(2, 0, 1)
         out["frame"] = torch.tensor(f)
         return out
 

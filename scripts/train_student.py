@@ -27,7 +27,7 @@ import yaml
 
 from ocgf.datasets.bev_inputs import BEVInputConfig, bev_inputs
 from ocgf.datasets.kitti360 import Kitti360Sequence, stage_drive
-from ocgf.datasets.locate import prepared_drive
+from ocgf.datasets.locate import describe_prepared, find_outputs, prepared_drive
 from ocgf.datasets.splits import from_ranges
 from ocgf.geometry.bev_grid import BEVGrid
 from ocgf.models.student import Student, StudentConfig
@@ -74,13 +74,10 @@ def split_frames(split: dict, sequence: str, part: str) -> np.ndarray | None:
 
 def find_label_dir(root: Path, sequence: str) -> Path:
     """The road teacher's folder for the sequence under root (wherever Kaggle mounted it): its manifest says so."""
-    for manifest in sorted(root.rglob(f"{sequence}/manifest.json")):
-        try:
-            if json.loads(manifest.read_text()).get("teacher") == "road":
-                return manifest.parent
-        except (OSError, ValueError):
-            continue
-    raise FileNotFoundError(f"no road labels for {sequence} under {root}: attach the road teacher's output")
+    found = find_outputs(root, sequence, "teacher", "road")
+    if not found:
+        raise FileNotFoundError(f"no road labels for {sequence} under {root}: attach the road teacher's output")
+    return found[0]
 
 
 def ensure_records(seq, frames, label_dir: Path, rec_dir: Path, in_cfg, t_cfg, log) -> None:
@@ -155,6 +152,8 @@ def main(argv=None):
         seqs = [Kitti360Sequence(args.dataset_map)]
     else:
         seqs = [Kitti360Sequence(sequence=s, components=prepared_drive(args.input_root, s)) for s in args.sequence]
+        for s in args.sequence:
+            log(describe_prepared(args.input_root, s))
     train_sets, val_sets, frames_info = [], [], {}
     for seq in seqs:
         label_dir = find_label_dir(args.road_labels, seq.sequence)
