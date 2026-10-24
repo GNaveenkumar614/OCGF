@@ -1,0 +1,5 @@
+# E3 ORACLE arm: MTrans on ground-truth 2D boxes (a perfect 2D detector), at training and evaluation.
+# An upper bound, never the main result.
+base: e2_gate.yaml
+objects:
+  source: oracle2d

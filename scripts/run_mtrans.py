@@ -31,6 +31,8 @@ def main(argv=None):
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--kitti-split", choices=["train", "val"])
     group.add_argument("--sequence", help="a prepared KITTI-360 drive")
+    p.add_argument("--box-source", choices=["detector", "oracle2d"], default="detector",
+                   help="where the 2D boxes come from: the detector, or ground-truth boxes (E3 oracle-2D arm)")
     p.add_argument("--min-score", type=float, default=0.1, help="2D score floor (recall-oriented)")
     p.add_argument("--min-points", type=int, default=1, help="frustum points needed for a 3D box")
     p.add_argument("--cache", type=Path, help="scratch folder for per-frame point caches")
@@ -62,7 +64,7 @@ def main(argv=None):
                     args.min_points, args.num_workers)
     write_manifest(args.out.with_suffix(".manifest.json"), teacher="mtrans", checkpoint=args.checkpoint.name,
                    checkpoint_sha256=sha256_file(args.checkpoint), epoch=meta["epoch"], classes=meta["classes"],
-                   anchors=meta["anchors"], detections=args.detections.name,
+                   anchors=meta["anchors"], detections=args.detections.name, box_source=args.box_source,
                    detections_sha256=sha256_file(args.detections), min_score=args.min_score,
                    min_points=args.min_points, summary=summary)
 

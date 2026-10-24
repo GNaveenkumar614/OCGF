@@ -1,0 +1,4 @@
+# E3, the real pipeline: MTrans on the 2D detector's boxes (the same as e2_gate, named for the E3 table).
+base: e2_gate.yaml
+objects:
+  source: detector

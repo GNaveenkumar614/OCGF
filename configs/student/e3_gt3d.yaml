@@ -1,0 +1,5 @@
+# E3 ORACLE arm: the ground-truth 3D boxes themselves as the object input, at training and evaluation.
+# An upper bound, never the main result.
+base: e2_gate.yaml
+objects:
+  source: oracle3d

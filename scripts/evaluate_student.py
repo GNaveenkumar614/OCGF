@@ -136,7 +136,9 @@ def main(argv=None):
     perturb = parse_spec(args.perturb)
     out = args.out or args.run / f"eval_{args.part}" / spec_name(args.perturb)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"run {args.run}: {model_cfg.mode}, objects {res.switches}, checkpoint after epoch {ckpt['epoch']} of "
+    print(f"run {args.run}: {model_cfg.mode}, objects {res.switches} from {res.object_source}"
+          + (" (ORACLE: ground truth as input)" if res.object_source != "detector" and res.uses_objects else "")
+          + f", checkpoint after epoch {ckpt['epoch']} of "
           f"{ckpt['epochs']}" + ("; post-hoc box subtraction" if args.post_hoc_boxes else "")
           + (f"; perturbation {args.perturb}" if args.perturb else ""), flush=True)
 
@@ -155,9 +157,9 @@ def main(argv=None):
             continue
         objects = None
         if needs_objects:
-            path = find_object_file(args.objects, seq.sequence)
+            path = find_object_file(args.objects, seq.sequence, res.object_source)
             if path is None:
-                raise SystemExit(f"no MTrans object file for {seq.sequence} under {args.objects}")
+                raise SystemExit(f"no {res.object_source} object file for {seq.sequence} under {args.objects}")
             objects, object_files[seq.sequence] = read_object_file(path, res.objects.min_score), str(path)
         if args.stage_dir:
             keep = {k: v for k, v in seq.paths.items() if k != "semantics2d"}
@@ -203,7 +205,8 @@ def main(argv=None):
     (out / "frames.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = ev.result()
     write_manifest(out / "metrics.json", kind="student_eval", run=str(args.run), mode=model_cfg.mode,
-                   objects=res.switches, post_hoc_boxes=args.post_hoc_boxes, object_files=object_files,
+                   objects=res.switches, object_source=res.object_source, post_hoc_boxes=args.post_hoc_boxes,
+                   object_files=object_files,
                    perturbation=args.perturb, perturbation_seed=args.perturb_seed,
                    checkpoint_epoch=int(ckpt["epoch"]), epochs=int(ckpt["epochs"]), split=split.get("name"),
                    part=args.part, frames=frames_info, run_config=cfg, metrics=result,

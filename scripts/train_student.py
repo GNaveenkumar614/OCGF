@@ -162,13 +162,17 @@ def main(argv=None):
             continue
         objects, obj_src = None, None
         if res.uses_objects:
-            path = find_object_file(args.objects, seq.sequence)
+            path = find_object_file(args.objects, seq.sequence, res.object_source)
             if path is None:
-                sys.exit(f"no MTrans object file for {seq.sequence} under {args.objects} (notebook 04's output)")
+                sys.exit(f"no {res.object_source} object file for {seq.sequence} under {args.objects} (notebook 04's output)")
             objects, obj_src = read_object_file(path, res.objects.min_score), object_source(path)
             object_files[seq.sequence] = obj_src
             with_objects = float(np.mean([f in objects for f in needed]))
-            log(f"{seq.sequence}: objects from {path} (MTrans epoch {obj_src['epoch']}); "
+            origin = (f"MTrans epoch {obj_src['epoch']}" if res.object_source != "oracle3d"
+                      else "ORACLE: ground-truth 3D boxes")
+            if res.object_source == "oracle2d":
+                origin += ", on ORACLE ground-truth 2D boxes"
+            log(f"{seq.sequence}: {res.object_source} objects from {path} ({origin}); "
                 f"{with_objects:.0%} of the frames have detections")
             if with_objects < 0.5:
                 log("  WARNING: under half the frames have detections: was the detector run on these frames?")

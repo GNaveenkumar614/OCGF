@@ -137,9 +137,23 @@ def find_runs(root, name: str) -> list[Path]:
     return found
 
 
-def find_object_file(root, sequence: str) -> Path | None:
-    """The MTrans object file of a sequence under root: <sequence>.jsonl beside a <sequence>.manifest.json written by
-    the MTrans teacher (scripts/run_mtrans.py). If several are attached, the most recent manifest wins."""
+OBJECT_SOURCES = ("detector", "oracle2d", "oracle3d")
+
+
+def _object_source(manifest: dict) -> str | None:
+    if manifest.get("teacher") == "oracle_gt3d":
+        return "oracle3d"
+    if manifest.get("teacher") == "mtrans":
+        return manifest.get("box_source", "detector")
+    return None
+
+
+def find_object_file(root, sequence: str, source: str = "detector") -> Path | None:
+    """The object file of a sequence under root: <sequence>.jsonl beside a <sequence>.manifest.json. source:
+    "detector" (MTrans on the 2D detector's boxes: the real pipeline), "oracle2d" (MTrans on ground-truth 2D boxes,
+    E3) or "oracle3d" (the ground-truth 3D boxes themselves, E3's oracle). If several match, the most recent wins."""
+    if source not in OBJECT_SOURCES:
+        raise ValueError(f"object source {source!r} is not one of {OBJECT_SOURCES}")
     found = []
     for here, _, filenames in _pruned_walk(root):
         if f"{sequence}.jsonl" in filenames and f"{sequence}.manifest.json" in filenames:
@@ -147,7 +161,7 @@ def find_object_file(root, sequence: str) -> Path | None:
                 manifest = json.loads((here / f"{sequence}.manifest.json").read_text())
             except (OSError, ValueError):
                 continue
-            if manifest.get("teacher") == "mtrans":
+            if _object_source(manifest) == source:
                 found.append((manifest.get("created_utc", ""), here / f"{sequence}.jsonl"))
     return max(found)[1] if found else None
 
