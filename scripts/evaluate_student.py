@@ -153,7 +153,9 @@ def main(argv=None):
                                 mcfg.threshold)
         print(f"{seq.sequence}: {len(frames)} frames, {(time.time() - t0) / max(len(rows), 1):.2f} s per frame", flush=True)
     if not rows:
-        raise SystemExit("no frames with ground truth in this split part")
+        raise SystemExit(f"no frames to evaluate in part '{args.part}' of {split.get('name')}: ground-truth frames per "
+                         f"drive in that part {frames_info}. A trial data-prep (e.g. 200 frames at the start of the "
+                         f"drive) has frames in the train part only: use --part train for a pipeline check.")
 
     (out / "frames.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = ev.result()

@@ -123,6 +123,10 @@ def main(argv=None):
             raise SystemExit(f"{args.split} is not a frame-level split of {seq.sequence}")
         sel &= np.isin(idx["frame"], np.concatenate([from_ranges(split["splits"][p]) for p in args.parts]))
     frames = idx["frame"][sel]
+    if not len(frames):
+        raise SystemExit(f"{seq.sequence}: no frames to build (usable, stored, inside a semantic window"
+                         + (f", in parts {args.parts} of {args.split.name}" if args.split else "") + "). A trial "
+                         "data-prep holds only the start of the drive: its frames lie in the train part.")
     windows = sorted({(int(idx["window_start"][i]), int(idx["window_end"][i])) for i in np.flatnonzero(sel)})
     out = args.out / seq.sequence
     out.mkdir(parents=True, exist_ok=True)
