@@ -99,10 +99,36 @@ def test_risk_coverage_ends_at_full_coverage_and_config_is_reported():
     assert sum(b["count"] for b in res["calibration"]["bins"]) == GRID.shape[0] * GRID.shape[1]
 
 
-def test_aurc_is_lower_for_a_predictor_that_ranks_hazards_last():
+def test_bounded_aurc_and_matched_recall_reward_ranking_free_road_first():
     layers = street_layers()
     good, rand = Evaluator(), Evaluator()
     good.add(perfect(layers), layers)
     rng = np.random.default_rng(2)
     rand.add({k: rng.uniform(size=GRID.shape) for k in ("road", "occ", "unk")}, layers)
-    assert 0 <= good.result()["aurc"] < rand.result()["aurc"]
+    g, r = good.result(), rand.result()
+    assert g["aurc_free"] == 0 < r["aurc_free"]                   # a perfect ranking claims only free road first
+    assert g["ffr_at_recall"]["0.6"] == 0 and r["ffr_at_recall"]["0.6"] > 0.1   # random: about the hazard share
+    rc = g["risk_coverage"]
+    assert all(a["free_recall"] <= b["free_recall"] for a, b in zip(rc, rc[1:])) and rc[-1]["free_recall"] == 1.0
+
+
+def test_matched_recall_compares_a_cautious_and_a_bold_model_fairly():
+    """Same claims at the 0.5 threshold, so the same plain ffr_pred; at equal free recall the confidence ranking
+    decides: wrong claims ranked below the true free road cost nothing until that recall is passed."""
+    layers = street_layers()
+    g = gt_masks(layers)
+    base = {k: v.copy() for k, v in perfect(layers).items()}
+    noisy = {k: v.copy() for k, v in base.items()}
+    wrong = g["hazard"] & (np.random.default_rng(3).uniform(size=GRID.shape) < 0.02)
+    for k, v in (("road", 1.0), ("occ", 0.0), ("unk", 0.0)):           # confidently wrong: as sure as the free road
+        noisy[k] = np.where(wrong, v, noisy[k])
+    shy = {k: v.copy() for k, v in noisy.items()}
+    for k, v in (("road", 0.97), ("occ", 0.0), ("unk", 0.0)):           # the same mistakes, less sure
+        shy[k] = np.where(wrong, v, shy[k])
+    res = {}
+    for name, probs in (("noisy", noisy), ("shy", shy)):
+        e = Evaluator()
+        e.add(probs, layers)
+        res[name] = e.result()
+    assert res["noisy"]["regions"]["all"]["ffr_pred"] == res["shy"]["regions"]["all"]["ffr_pred"] > 0
+    assert res["noisy"]["ffr_at_recall"]["0.7"] > 0 == res["shy"]["ffr_at_recall"]["0.7"]   # ranking decides

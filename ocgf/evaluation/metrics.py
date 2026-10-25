@@ -12,8 +12,13 @@ False-free rate, both versions (the headline is chosen before the first E1 run):
 Free road: IoU, precision, recall of D_free against free (and of the road head alone, p_road >= t). Occupancy: p_occ
 against occupied | obstacle, on cells with ground truth. Unknown: p_unk against unknown. Per class (box classes of
 the ground truth): cells, occupancy recall, share called free. Calibration of p_free against free: ECE and the
-reliability bins; risk-coverage: ffr_pred of the cells above each confidence level against the share of the grid they
-cover, and its area (AURC, lower is better).
+reliability bins. Risk-coverage: cells ranked by p_free; at each confidence level, the share of the grid claimed
+(coverage), its ffr_pred (risk) and the share of the true free road it finds (free recall). Two summaries compare
+models at equal footing, where a plain ffr_pred favours a model that claims little:
+    ffr_at_recall  ffr_pred at the confidence level where free recall first reaches 0.5 / 0.6 / 0.7
+    aurc_free      area under risk over coverage from 0 to the ground truth's free share, divided by that share (the
+                   range a perfect model would claim; beyond it every model only adds walls and unseen cells, which
+                   made a full-range AURC about 0.75-0.79 for every E0 model and said nothing)
 
 Regions: the whole grid, distance bands from the LiDAR, and the near-object band: cells within near_m of a box of
 the four object classes (car, large vehicle, pedestrian, cyclist), the box cells included. Buildings, walls and
@@ -40,11 +45,13 @@ class MetricConfig:
     bands: tuple = ((0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 55.0))
     drivable: tuple = (ROAD,)            # parking as drivable: still open
     ece_bins: int = 15
-    rc_bins: int = 100
+    rc_bins: int = 1000
+    recall_levels: tuple = (0.5, 0.6, 0.7)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["bands"], d["drivable"] = [list(b) for b in self.bands], list(self.drivable)
+        d["recall_levels"] = list(self.recall_levels)
         return d
 
 
@@ -90,7 +97,7 @@ class Evaluator:
         self.counts: dict[str, dict[str, int]] = {}
         self.classes = {name: {"cells": 0, "occ_hit": 0, "called_free": 0} for name in OCCUPIED_CLASSES[1:]}
         self.cal = np.zeros((3, cfg.ece_bins))                    # count, sum of confidence, sum of free
-        self.rc = np.zeros((2, cfg.rc_bins))                      # cells per confidence bin: all, hazard
+        self.rc = np.zeros((3, cfg.rc_bins))                      # cells per confidence bin: all, hazard, free
         self.frames = 0
 
     def add(self, probs: dict, layers: dict) -> dict:
@@ -131,6 +138,7 @@ class Evaluator:
         rb = np.clip((conf * self.cfg.rc_bins).astype(int), 0, self.cfg.rc_bins - 1).ravel()
         self.rc[0] += np.bincount(rb, minlength=self.cfg.rc_bins)
         self.rc[1] += np.bincount(rb, weights=g["hazard"].ravel().astype(float), minlength=self.cfg.rc_bins)
+        self.rc[2] += np.bincount(rb, weights=g["free"].ravel().astype(float), minlength=self.cfg.rc_bins)
         self.frames += 1
         return frame
 
@@ -151,12 +159,25 @@ class Evaluator:
         out["calibration"] = {"ece": round(float(np.sum(np.abs(s_conf - s_free)) / max(n.sum(), 1)), 5),
                               "bins": [{"count": int(n[k]), "confidence": _ratio(s_conf[k], n[k]),
                                         "free_rate": _ratio(s_free[k], n[k])} for k in range(len(n))]}
-        cells, hazard = self.rc[0][::-1].cumsum(), self.rc[1][::-1].cumsum()       # from the most confident bin down
-        total = max(self.rc[0].sum(), 1)
+        cells, hazard, free = (self.rc[i][::-1].cumsum() for i in range(3))   # from the most confident bin down
+        total, total_free = max(self.rc[0].sum(), 1), max(self.rc[2].sum(), 1)
+        coverage, recall = cells / total, free / total_free
+        risk = np.where(cells > 0, hazard / np.maximum(cells, 1), 0.0)
+        step = max(1, self.cfg.rc_bins // 100)                     # report 100 points of the finer curve
         out["risk_coverage"] = [{"min_confidence": round(1 - (k + 1) / self.cfg.rc_bins, 4),
-                                 "coverage": round(float(cells[k] / total), 5), "ffr_pred": _ratio(hazard[k], cells[k])}
-                                for k in range(self.cfg.rc_bins)]
-        cov = np.concatenate([[0.0], cells / total])                # area under risk (ffr_pred) over coverage
-        risk = np.concatenate([[0.0], np.where(cells > 0, hazard / np.maximum(cells, 1), 0.0)])
-        out["aurc"] = round(float(np.sum(np.diff(cov) * risk[1:])), 5)
+                                 "coverage": round(float(coverage[k]), 5), "ffr_pred": _ratio(hazard[k], cells[k]),
+                                 "free_recall": round(float(recall[k]), 5)}
+                                for k in range(step - 1, self.cfg.rc_bins, step)]
+        out["ffr_at_recall"] = {}
+        for r in self.cfg.recall_levels:
+            k = int(np.searchsorted(recall, r))                    # the first level reaching the recall
+            out["ffr_at_recall"][f"{r:g}"] = _ratio(hazard[k], cells[k]) if k < len(recall) else None
+        share = self.rc[2].sum() / total                           # the ground truth's free share of the grid
+        if share > 0:
+            cov = np.concatenate([[0.0], coverage])
+            rsk = np.concatenate([[risk[0]], risk])
+            upto = np.minimum(cov, share)
+            out["aurc_free"] = round(float(np.sum(np.diff(upto) * rsk[1:]) / share), 5)
+        else:
+            out["aurc_free"] = None
         return out
