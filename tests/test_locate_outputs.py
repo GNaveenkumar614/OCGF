@@ -41,3 +41,16 @@ def test_the_full_prepared_output_wins_over_a_trial_and_trials_are_flagged(tmp_p
     assert find_prepared(root, FSEQ) == full
     line = describe_prepared(root, FSEQ)
     assert str(full) in line.splitlines()[0] and "also attached, not used" in line and "TRIAL" not in line
+
+
+def test_the_detector_file_covering_the_most_frames_wins(tmp_path):
+    from ocgf.datasets.locate import find_detections
+    seq = "s"
+    old, new = tmp_path / "a_old" / "detector2d_v1" / "kitti360", tmp_path / "b_new" / "detector2d_v1" / "kitti360"
+    for folder, frames in ((old, 3), (new, 5)):
+        folder.mkdir(parents=True)
+        (folder / f"{seq}.txt").write_text("".join(f"kitti360/{seq}/{f:010d} car 0.9 1 2 3 4\n" for f in range(frames)))
+    lines = []
+    assert find_detections(tmp_path, seq, log=lines.append) == new / f"{seq}.txt"
+    assert any("not used" in l and "3 frames" in l for l in lines)
+    assert find_detections(tmp_path / "a_old", seq) == old / f"{seq}.txt"

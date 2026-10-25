@@ -166,9 +166,30 @@ def find_object_file(root, sequence: str, source: str = "detector") -> Path | No
     return max(found)[1] if found else None
 
 
-def find_detections(root, sequence: str) -> Path | None:
-    """The 2D detector's file for a KITTI-360 sequence under root: kitti360/<sequence>.txt (notebook 02's output)."""
-    for here, _, filenames in _pruned_walk(root):
-        if here.name == "kitti360" and f"{sequence}.txt" in filenames:
-            return here / f"{sequence}.txt"
-    return None
+def detection_frames(path) -> int:
+    """How many frames a detector file covers (distinct frame ids)."""
+    with open(path) as f:
+        return len({line.split(maxsplit=1)[0] for line in f if line.strip()})
+
+
+def find_all_detections(root, sequence: str) -> list[Path]:
+    """Every 2D-detector file for a KITTI-360 sequence under root: kitti360/<sequence>.txt (notebook 02's output)."""
+    return [here / f"{sequence}.txt" for here, _, filenames in _pruned_walk(root)
+            if here.name == "kitti360" and f"{sequence}.txt" in filenames]
+
+
+def find_detections(root, sequence: str, log=print) -> Path | None:
+    """The 2D detector's file for a KITTI-360 sequence under root. If several are attached (an earlier run's file can
+    sit inside another dataset), the one covering the most frames: the detector's frame choice was widened on
+    2026-10-24 to include every student frame, so an older file covers fewer. The others are listed."""
+    found = find_all_detections(root, sequence)
+    if len(found) <= 1:
+        return found[0] if found else None
+    counts = {p: detection_frames(p) for p in found}
+    use = max(found, key=counts.get)
+    if log:
+        log(f"{sequence}: {len(found)} detector files attached; using {use} ({counts[use]} frames)")
+        for p in found:
+            if p != use:
+                log(f"  not used: {p} ({counts[p]} frames)")
+    return use

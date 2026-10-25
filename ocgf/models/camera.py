@@ -41,15 +41,19 @@ class DinoBackbone(nn.Module):
 
 
 class StubBackbone(nn.Module):
-    """A stand-in for tests and CPU smoke runs: a fixed random 14x14 patch embedding."""
+    """A stand-in for tests and CPU smoke runs: a fixed random 14x14 patch embedding. Seeded, so the same weights come
+    back every time it is built (frozen parts are not stored in checkpoints)."""
     patch = 14
 
     def __init__(self, out_channels: int = 32):
         super().__init__()
         self.out_channels = out_channels
         self.proj = nn.Conv2d(3, out_channels, self.patch, self.patch)
-        for p in self.proj.parameters():
-            p.requires_grad_(False)
+        g = torch.Generator().manual_seed(0)
+        with torch.no_grad():
+            for p in self.proj.parameters():
+                p.copy_((torch.rand(p.shape, generator=g) * 2 - 1) / (3 * self.patch * self.patch) ** 0.5)
+                p.requires_grad_(False)
 
     def forward(self, x):
         with torch.no_grad():
